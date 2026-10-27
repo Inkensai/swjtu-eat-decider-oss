@@ -1,5 +1,5 @@
 import type { RecommendRequest, Resource } from '../shared/types'
-import { DEFAULT_RESTAURANT_CATEGORY, isRestaurantCategory } from '../shared/categories'
+import { DEFAULT_RESTAURANT_CATEGORY, isDishCategory, isRestaurantCategory, isRestaurantCategoryFilter } from '../shared/categories'
 import { HttpError } from './http'
 
 type Input = Record<string, unknown>
@@ -153,6 +153,14 @@ export function validateRestaurantCategoryMutation(values: Record<string, unknow
   if (!isRestaurantCategory(category)) invalid('店铺分类必须是标准分类；历史分类只能在未修改时保留')
 }
 
+export function validateDishCategoryMutation(values: Record<string, unknown>, currentCategory?: string): void {
+  if (!Object.hasOwn(values, 'category')) return
+  const category = values.category
+  if (typeof category !== 'string') invalid('菜品分类必须是文本')
+  if (currentCategory !== undefined && category === currentCategory) return
+  if (category !== '' && !isDishCategory(category)) invalid('菜品分类必须是标准分类或留空；历史分类只能在未修改时保留')
+}
+
 export function validateRecommend(value: unknown): RecommendRequest {
   const input = object(value, ['mode', 'filters', 'avoidRecent', 'recentDishIds'])
   const mode = input.mode
@@ -163,7 +171,7 @@ export function validateRecommend(value: unknown): RecommendRequest {
   if (Object.hasOwn(source, 'restaurantId')) filters.restaurantId = validateId(source.restaurantId)
   if (Object.hasOwn(source, 'restaurantCategory')) {
     const value = string(source.restaurantCategory, '店铺分类', 60, true)
-    if (!isRestaurantCategory(value)) invalid('店铺分类无效')
+    if (!isRestaurantCategoryFilter(value)) invalid('店铺分类无效')
     filters.restaurantCategory = value
   }
   if (Object.hasOwn(source, 'category')) filters.category = string(source.category, '分类', 60, true)

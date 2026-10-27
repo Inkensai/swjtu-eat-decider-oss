@@ -6,7 +6,7 @@
 
 ## 公共菜单
 
-`GET /api/areas`、`GET /api/restaurants`、`GET /api/dishes`。公共菜单排除自身及父级停用项。可使用areaId，店铺/菜品可使用restaurantId、category精确筛选；首页category专指菜品分类。
+`GET /api/areas`、`GET /api/restaurants`、`GET /api/dishes`。公共菜单排除自身及父级停用项。可使用areaId，店铺/菜品可使用restaurantId、category筛选；`category`按当前标准分类并结合已知旧名称映射匹配，首页category专指菜品分类。
 
 区域字段：id/name/type/sortOrder/enabled/createdAt/updatedAt。店铺字段：id/areaId/name/category/location/enabled/createdAt/updatedAt。菜品字段：id/restaurantId/name/category/priceCents/weight/notes/enabled/createdAt/updatedAt。
 
@@ -31,7 +31,7 @@
 
 mode为restaurant/dish/combo。filters还支持restaurantId、restaurantCategory、category；未使用的筛选字段应省略，不能传空字符串。dish模式必须指定restaurantId。recentDishIds至多5项，按旧到新；排除列表各至多200项。所有价格、权重与启用状态以数据库为准，客户端不能传入候选菜单或权重。
 
-`restaurantCategory`只筛选店铺分类，必须是`炒菜 / 家常菜`、`粉面 / 面食`、`快餐 / 盖饭`、`火锅 / 串串`、`烧烤 / 烤肉`、`小吃 / 轻食`、`饮品 / 甜品`、`其他 / 综合`之一；其他值返回400。省略时保持 V1.0 的不限分类行为。历史空店铺分类按`其他 / 综合`参与；不属于标准列表的历史自定义分类只在省略该参数时参与。`category`仍只筛选菜品分类，两者互不替代。dish模式已明确指定店铺，服务端忽略`restaurantCategory`。
+`restaurantCategory`只筛选店铺分类。新标准值为`炒菜 / 家常菜`、`粉面 / 面食`、`快餐 / 盖饭`、`汉堡 / 炸鸡`、`火锅 / 麻辣烫`、`烧烤 / 烤肉`、`小吃 / 面点`、`轻食 / 简餐`、`饮品 / 甜品`、`其他 / 综合`。为兼容旧客户端，`火锅 / 串串`按`火锅 / 麻辣烫`匹配，`小吃 / 轻食`按原值精确匹配且不自动拆分；其他值返回400。历史空店铺分类按`其他 / 综合`参与；其他历史自定义分类只在省略该参数时参与。`category`只筛选菜品分类，两者互不替代；新标准为12类，已知旧名按兼容映射匹配，未知历史值仍可按原值精确筛选。dish模式已明确指定店铺，服务端忽略`restaurantCategory`。
 
 成功返回 `{status:"ok",restaurant,dish,candidateDishCount}`。restaurant模式dish为null。空候选是HTTP200 `{status:"empty",message}`，不是服务异常。
 
@@ -63,7 +63,7 @@ mode为restaurant/dish/combo。filters还支持restaurantId、restaurantCategory
 | restaurants | areaId、name、category、location、enabled |
 | dishes | restaurantId、name、category、priceCents、weight、notes、enabled |
 
-type默认为other（canteen/nearby/other），sortOrder默认为0，enabled默认为true，location/notes默认为空字符串，weight默认为1；店铺创建时省略category则默认为`其他 / 综合`，菜品创建时省略category则默认为空。PATCH仅改提交字段，空PATCH和未知字段拒绝；id和时间由服务端生成。店铺与菜品的历史自定义分类继续按≤60字符文本保存，避免编辑其他字段时丢失。
+type默认为other（canteen/nearby/other），sortOrder默认为0，enabled默认为true，location/notes默认为空字符串，weight默认为1；店铺创建时省略category则默认为`其他 / 综合`，菜品创建时省略category则默认为空。店铺新建或主动改分类时只接受10个新标准值；菜品新建或主动改分类时只接受12个新标准值或空字符串（不分类）。PATCH仅改提交字段，空PATCH和未知字段拒绝；id和时间由服务端生成。店铺与菜品的历史自定义分类继续按≤60字符文本保存：编辑其他字段且分类原值不变时允许保留，主动修改则必须切换到新标准值。
 
 名称1–100字符，分类≤60，位置≤300，备注≤500；价格为0–100000000整数分，权重为0–1000000有限数，排序为0–1000000整数；请求体上限65536字节。
 

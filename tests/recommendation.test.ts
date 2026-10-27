@@ -93,7 +93,7 @@ describe('recommendation candidates and modes', () => {
   })
 })
 
-describe('restaurant category filtering', () => {
+describe('restaurant and dish category filtering', () => {
   const categorized = menu([
     dish('noodle-dish', 'noodle'),
     dish('rice-dish', 'rice'),
@@ -128,10 +128,26 @@ describe('restaurant category filtering', () => {
     expect(selectedDish(data, request('combo', { restaurantCategory: DEFAULT_RESTAURANT_CATEGORY }), 0.99)).toBe('other-dish')
   })
 
-  it('keeps custom historical categories only in the unlimited filter', () => {
+  it('keeps custom historical restaurant categories only in the unlimited filter', () => {
     const data = menu([dish('custom-dish', 'custom')], [restaurant('custom', { category: '川菜' })])
     expect(selectedDish(data, request('combo', {}), 0)).toBe('custom-dish')
     expect(recommend(data, request('combo', { restaurantCategory: '其他 / 综合' }))).toMatchObject({ status: 'empty' })
+  })
+
+  it('maps the legacy firepot restaurant name in both directions', () => {
+    const legacy = menu([dish('legacy-hotpot', 'legacy')], [restaurant('legacy', { category: '火锅 / 串串' })])
+    expect(selectedDish(legacy, request('combo', { restaurantCategory: '火锅 / 麻辣烫' }), 0)).toBe('legacy-hotpot')
+    const current = menu([dish('new-hotpot', 'current')], [restaurant('current', { category: '火锅 / 麻辣烫' })])
+    expect(selectedDish(current, request('combo', { restaurantCategory: '火锅 / 串串' }), 0)).toBe('new-hotpot')
+  })
+
+  it('does not guess the split of the legacy snack restaurant category', () => {
+    const legacy = menu([dish('legacy-snack', 'legacy')], [restaurant('legacy', { category: '小吃 / 轻食' })])
+    expect(recommend(legacy, request('combo', { restaurantCategory: '小吃 / 面点' }))).toMatchObject({ status: 'empty' })
+    expect(recommend(legacy, request('combo', { restaurantCategory: '轻食 / 简餐' }))).toMatchObject({ status: 'empty' })
+    expect(selectedDish(legacy, request('combo', { restaurantCategory: '小吃 / 轻食' }), 0)).toBe('legacy-snack')
+    const current = menu([dish('current-snack', 'current')], [restaurant('current', { category: '小吃 / 面点' })])
+    expect(recommend(current, request('combo', { restaurantCategory: '小吃 / 轻食' }))).toMatchObject({ status: 'empty' })
   })
 
   it('does not apply a restaurant category to an explicitly selected dish-mode store', () => {
@@ -141,17 +157,42 @@ describe('restaurant category filtering', () => {
   })
 
   it('keeps dish category independent from restaurant category', () => {
-    const data = menu([dish('d1', 'r1', { category: '米饭 / 盖饭' })], [restaurant('r1', { category: '粉面 / 面食' })])
+    const data = menu([dish('d1', 'r1', { category: '米饭 / 套餐' })], [restaurant('r1', { category: '粉面 / 面食' })])
     expect(recommend(data, request('combo', {
-      restaurantId: 'r1', restaurantCategory: '粉面 / 面食', category: '米饭 / 盖饭',
+      restaurantId: 'r1', restaurantCategory: '粉面 / 面食', category: '米饭 / 套餐',
     }), () => 0)).toMatchObject({ status: 'ok', restaurant: { id: 'r1' }, dish: { id: 'd1' } })
+  })
+
+  it.each([
+    ['米饭 / 盖饭', '米饭 / 套餐'],
+    ['粉面', '粉面 / 米线'],
+    ['主菜', '炒菜 / 热菜'],
+    ['小吃', '小吃 / 轻食'],
+  ])('maps the legacy dish filter %s onto new records and the new filter onto old records', (legacyName, currentName) => {
+    const data = menu([
+      dish('legacy-dish', 'legacy', { category: legacyName }),
+      dish('current-dish', 'current', { category: currentName }),
+    ], [restaurant('legacy'), restaurant('current')])
+    expect(selectedDish(data, request('combo', {
+      category: currentName, excludedRestaurantIds: ['current'],
+    }), 0)).toBe('legacy-dish')
+    expect(selectedDish(data, request('combo', {
+      category: legacyName, excludedRestaurantIds: ['legacy'],
+    }), 0)).toBe('current-dish')
+  })
+
+  it('keeps unknown historical dish categories available only without a category filter', () => {
+    const data = menu([dish('unknown', 'r1', { category: '宵夜' })], [restaurant('r1')])
+    expect(selectedDish(data, request('combo', {}), 0)).toBe('unknown')
+    expect(recommend(data, request('combo', { category: '其他' }))).toMatchObject({ status: 'empty' })
+    expect(selectedDish(data, request('combo', { category: '宵夜' }), 0)).toBe('unknown')
   })
 
   it('returns a category-specific empty message', () => {
     const data = menu([dish('d1')], [restaurant('r1', { category: '快餐 / 盖饭' })])
-    expect(recommend(data, request('combo', { restaurantCategory: '火锅 / 串串' }))).toEqual({
+    expect(recommend(data, request('combo', { restaurantCategory: '火锅 / 麻辣烫' }))).toEqual({
       status: 'empty',
-      message: '没有符合「火锅 / 串串」分类和当前条件的店铺或菜品，请放宽筛选条件',
+      message: '没有符合「火锅 / 麻辣烫」分类和当前条件的店铺或菜品，请放宽筛选条件',
     })
   })
 })

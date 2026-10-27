@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Mode, RecommendRequest, RecommendResult } from '../../shared/types'
-import { RESTAURANT_CATEGORIES, normalizeRestaurantCategory, type RestaurantCategory } from '../../shared/categories'
+import { DISH_CATEGORIES, RESTAURANT_CATEGORIES, canonicalDishCategory, normalizeRestaurantCategory, type DishCategory, type RestaurantCategory } from '../../shared/categories'
 import { api } from '../services/api'
 import { useMenuStore } from '../stores/menu'
 import { useHistoryStore } from '../stores/history'
@@ -13,7 +13,7 @@ const mode = ref<Mode>('combo')
 const areaId = ref('')
 const restaurantId = ref('')
 const restaurantCategory = ref<RestaurantCategory | ''>('')
-const category = ref('')
+const category = ref<DishCategory | ''>('')
 const maxPrice = ref('')
 const excludedRestaurantIds = ref<string[]>([])
 const excludedDishIds = ref<string[]>([])
@@ -24,10 +24,35 @@ const result = ref<RecommendResult | null>(null)
 const resultHistoryId = ref('')
 const activeAreas = computed(() => menu.areas.filter((area) => area.enabled))
 const activeRestaurants = computed(() => menu.restaurants.filter((restaurant) => restaurant.enabled && activeAreas.value.some((area) => area.id === restaurant.areaId)))
-const restaurants = computed(() => activeRestaurants.value.filter((restaurant) => (!areaId.value || restaurant.areaId === areaId.value)
-  && (mode.value === 'dish' || !restaurantCategory.value || normalizeRestaurantCategory(restaurant.category) === restaurantCategory.value)))
-const dishes = computed(() => menu.dishes.filter((dish) => dish.enabled && restaurants.value.some((restaurant) => restaurant.id === dish.restaurantId) && (!restaurantId.value || dish.restaurantId === restaurantId.value)))
-const categories = computed(() => [...new Set(dishes.value.map((dish) => dish.category).filter(Boolean))].sort())
+const dishRestaurantIds = computed(() => new Set(menu.dishes.filter((dish) => dish.enabled).map((dish) => dish.restaurantId)))
+const areaRestaurants = computed(() => activeRestaurants.value.filter((restaurant) => !areaId.value || restaurant.areaId === areaId.value))
+const restaurantCategoryCounts = computed(() => {
+  const counts = Object.fromEntries(RESTAURANT_CATEGORIES.map((item) => [item, 0])) as Record<RestaurantCategory, number>
+  for (const restaurant of areaRestaurants.value) {
+    // 与服务端推荐候选保持一致：没有启用菜品的店铺不参与类型计数。
+    if (!dishRestaurantIds.value.has(restaurant.id)) continue
+    const effective = normalizeRestaurantCategory(restaurant.category)
+    if (Object.hasOwn(counts, effective)) counts[effective as RestaurantCategory]++
+  }
+  return counts
+})
+const restaurants = computed(() => areaRestaurants.value.filter((restaurant) => mode.value === 'dish'
+  || !restaurantCategory.value
+  || normalizeRestaurantCategory(restaurant.category) === restaurantCategory.value))
+const baseDishes = computed(() => menu.dishes.filter((dish) => dish.enabled
+  && restaurants.value.some((restaurant) => restaurant.id === dish.restaurantId)
+  && (!restaurantId.value || dish.restaurantId === restaurantId.value)))
+const dishCategoryCounts = computed(() => {
+  const counts = Object.fromEntries(DISH_CATEGORIES.map((item) => [item, 0])) as Record<DishCategory, number>
+  for (const dish of baseDishes.value) {
+    const effective = canonicalDishCategory(dish.category)
+    if (Object.hasOwn(counts, effective)) counts[effective as DishCategory]++
+  }
+  return counts
+})
+const dishes = computed(() => category.value
+  ? baseDishes.value.filter((dish) => canonicalDishCategory(dish.category) === category.value)
+  : baseDishes.value)
 const selectedEntry = computed(() => history.entries.find((entry) => entry.id === resultHistoryId.value))
 const areaName = computed(() => { const current = result.value; return current?.status === 'ok' ? menu.areas.find((area) => area.id === current.restaurant.areaId)?.name : '' })
 const selectedFilterCount = computed(() => Number(Boolean(category.value)) + Number(Boolean(maxPrice.value)) + excludedRestaurantIds.value.length + excludedDishIds.value.length)
@@ -36,10 +61,15 @@ watch(restaurants, () => {
   if (!visible.has(restaurantId.value)) restaurantId.value = ''
   excludedRestaurantIds.value = excludedRestaurantIds.value.filter((id) => visible.has(id))
 })
+watch(restaurantCategoryCounts, (counts) => {
+  if (restaurantCategory.value && counts[restaurantCategory.value] === 0) restaurantCategory.value = ''
+})
 watch(dishes, () => {
   const visible = new Set(dishes.value.map((dish) => dish.id))
   excludedDishIds.value = excludedDishIds.value.filter((id) => visible.has(id))
-  if (!categories.value.includes(category.value)) category.value = ''
+})
+watch(dishCategoryCounts, (counts) => {
+  if (category.value && counts[category.value] === 0) category.value = ''
 })
 watch(mode, (value) => { if (value === 'dish') restaurantCategory.value = '' })
 onMounted(() => { void menu.load() })
@@ -93,14 +123,14 @@ function resetFilters() { category.value = ''; maxPrice.value = ''; excludedRest
           <button v-for="item in (['combo', 'restaurant', 'dish'] as Mode[])" :key="item" type="button" :class="{ selected: mode === item }" :aria-pressed="mode === item" @click="mode = item"><span class="mode-icon" aria-hidden="true">{{ item === 'combo' ? '✦' : item === 'restaurant' ? '⌂' : '≋' }}</span>{{ modeLabels[item] }}</button>
         </div>
         <div class="field-grid main-fields">
-          <label v-if="mode !== 'dish'" class="type-filter-field">今天想吃什么类型？<select v-model="restaurantCategory"><option value="">不限类型</option><option v-for="item in RESTAURANT_CATEGORIES" :key="item" :value="item">{{ item }}</option></select></label>
+          <label v-if="mode !== 'dish'" class="type-filter-field">今天想吃什么类型？<select v-model="restaurantCategory"><option value="">不限类型</option><option v-for="item in RESTAURANT_CATEGORIES" :key="item" :value="item" :disabled="restaurantCategoryCounts[item] === 0">{{ item }}（{{ restaurantCategoryCounts[item] }}）</option></select><small>按当前区域与启用店铺统计；无候选类别不可选。</small></label>
           <label>想去哪里<select v-model="areaId"><option value="">全部区域</option><option v-for="area in activeAreas" :key="area.id" :value="area.id">{{ area.name }}</option></select></label>
           <label>{{ mode === 'dish' ? '选择店铺（必选）' : '想吃哪家（可选）' }}<select v-model="restaurantId"><option value="">{{ mode === 'dish' ? '请选择一家店铺' : '都可以，让我来选' }}</option><option v-for="restaurant in restaurants" :key="restaurant.id" :value="restaurant.id">{{ restaurant.name }}</option></select></label>
         </div>
         <details class="advanced-filters">
           <summary>再挑剔一点 <span>{{ selectedFilterCount ? `${selectedFilterCount} 项筛选` : '分类、预算和排除项' }}</span></summary>
           <div class="advanced-body">
-            <div class="field-grid"><label>菜品分类<select v-model="category"><option value="">不限分类</option><option v-for="item in categories" :key="item">{{ item }}</option></select></label><label>单份预算上限（元）<input v-model="maxPrice" inputmode="decimal" placeholder="例如 20.00" maxlength="10"></label></div>
+            <div class="field-grid"><label>菜品分类<select v-model="category"><option value="">不限分类</option><option v-for="item in DISH_CATEGORIES" :key="item" :value="item" :disabled="dishCategoryCounts[item] === 0">{{ item }}（{{ dishCategoryCounts[item] }}）</option></select><small>旧分类仅在不限分类下参与；已映射旧名称自动计入。</small></label><label>单份预算上限（元）<input v-model="maxPrice" inputmode="decimal" placeholder="例如 20.00" maxlength="10"></label></div>
             <fieldset v-if="restaurants.length" class="choice-fieldset"><legend>这次不想去</legend><div class="check-list"><label v-for="restaurant in restaurants" :key="restaurant.id" class="check-label"><input v-model="excludedRestaurantIds" type="checkbox" :value="restaurant.id">{{ restaurant.name }}</label></div></fieldset>
             <fieldset v-if="dishes.length" class="choice-fieldset"><legend>这次不想吃</legend><div class="check-list"><label v-for="dish in dishes" :key="dish.id" class="check-label"><input v-model="excludedDishIds" type="checkbox" :value="dish.id">{{ dish.name }}<span class="subtle"> · {{ restaurants.find((restaurant) => restaurant.id === dish.restaurantId)?.name }}</span></label></div></fieldset>
             <button type="button" class="text-button" @click="resetFilters">重置额外筛选</button>
