@@ -59,9 +59,10 @@ npx wrangler d1 migrations apply <D1_NAME> --remote --env production --config wr
 迁移内容：
 
 - `0001_menu.sql`：`areas`、`restaurants`、`dishes` 及三个索引；
-- `0002_admin_auth.sql`：`admin_sessions`、`admin_login_attempts` 及两个索引。
+- `0002_admin_auth.sql`：`admin_sessions`、`admin_login_attempts` 及两个索引；
+- `0003_ratings.sql`：`ratings`、`rating_rate_limits`、两个部分唯一索引、两个普通索引与一个窗口索引，以及级联外键和 CHECK 约束。
 
-必须通过 Wrangler 的迁移登记表执行，不要手工重复执行整份 `CREATE` SQL。不要将迁移放进 Pages 构建命令；构建阶段不应写生产库。
+必须通过 Wrangler 的迁移登记表执行，不要手工重复执行整份 `CREATE` SQL。不要将迁移放进 Pages 构建命令；构建阶段不应写生产库。从 V1.1.2 升级时只有 `0003_ratings.sql` 会执行，已有菜单数据不会被改写。
 
 迁移后核验：
 
@@ -73,7 +74,12 @@ npx wrangler d1 execute <D1_NAME> --remote --env production --config wrangler.js
   --command "SELECT id, name, applied_at FROM d1_migrations ORDER BY id; PRAGMA foreign_key_check; PRAGMA quick_check;"
 ```
 
-预期有 5 张业务/认证表、5 个索引、2 条迁移记录；`foreign_key_check` 无输出，`quick_check` 返回 `ok`。
+预期有 7 张业务/认证表、10 个索引、3 条迁移记录；`foreign_key_check` 无输出，`quick_check` 返回 `ok`。V1.2 的评分相关对象可用下面的语句单独核验：
+
+```powershell
+npx wrangler d1 execute <D1_NAME> --remote --env production --config wrangler.jsonc `
+  --command "SELECT type, name, tbl_name FROM sqlite_schema WHERE tbl_name IN ('ratings','rating_rate_limits') ORDER BY type, name;"
+```
 
 ### 备份与恢复
 
@@ -202,8 +208,28 @@ npx wrangler pages deployment tail --project-name <PAGES_PROJECT> --environment 
 | `ADMIN_SESSION_TTL_SECONDS` | 43200 | 300–604800 | 会话绝对有效期 |
 | `ADMIN_LOGIN_MAX_ATTEMPTS` | 5 | 3–100 | 窗口内连续失败上限 |
 | `ADMIN_LOGIN_WINDOW_SECONDS` | 900 | 60–86400 | 限流窗口与锁定时长 |
+| `RATING_RATE_LIMIT` | 30 | 1–10000 | 同一匿名身份在评分窗口内的写入上限 |
+| `RATING_IP_RATE_LIMIT` | 120 | 1–100000 | 同一来源 IP 在评分窗口内的写入上限 |
+| `RATING_RATE_WINDOW_SECONDS` | 600 | 10–86400 | 评分限流窗口（秒） |
 
-## 7. 回退
+## 7. 匿名评分与评分限流
+
+- **不需要新增 Secret。** 匿名评分身份在运行时由服务端生成，D1 只保存其 SHA-256 摘要；没有需要配置的评分密钥。
+- 首次提交评分时下发 `ed_rater_id` Cookie：生产为 `Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`。只有本地回环 HTTP 开发省略 `Secure`；不要为了让明文 HTTP 可用而关闭它。
+- 同一匿名身份对同一对象只有一条有效评分；再次提交更新原记录，评分人数不变。删除权限只有原 Cookie 身份或认证管理员；管理员删除同时要求 `Origin` 与 `X-CSRF-Token`。
+- 限流按匿名身份摘要与来源 IP 摘要分别计数，使用上表的三个普通变量。来源 IP 只信任 `CF-Connecting-IP`（Cloudflare 边缘写入），不要改为信任 `X-Real-IP` 等客户端可伪造的头。
+- 评分接口失败时不会写入数据；响应始终 `Cache-Control: no-store`，避免把某个身份的个人评分状态缓存给其他访客。
+
+上线后只读核验：
+
+```powershell
+curl.exe -s https://<你的域名>/api/ratings
+# 期望：{"restaurants":[],"dishes":[],"mine":[]}
+```
+
+如需在生产验证写入，请先得到明确授权，并使用一个受控身份完成「首次评分 → 修改（人数不变）→ 删除本人评分」后清理；不要删除真实访客的评分，也不要把测试评分留在生产库。
+
+## 8. 回退
 
 - 代码回退与数据库回退分开处理；不要把代码回退当作数据恢复。
 - 保留上一可用部署和失败日志。

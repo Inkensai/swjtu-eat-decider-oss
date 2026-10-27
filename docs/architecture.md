@@ -8,11 +8,12 @@ Vue 3 单页应用通过同源 JSON API 调用 Cloudflare Pages Function，使�
 
 ## 模块
 
-- `src/`：首页、历史页、管理页、API 客户端和浏览器本地历史。
+- `src/`：首页、浏览菜单、历史页、管理页、API 客户端、浏览器本地历史与评分状态镜像。
+- `src/components/`：可复用评分控件（键盘可操作、带可访问标签）和管理员评分管理面板。
 - `shared/`：共享类型与独立推荐逻辑，无 DOM 或持久化依赖。
-- `server/`：Worker 入口、认证、参数校验、D1 数据访问和路由。
-- `migrations/`：版本化 SQL；三张业务表、管理员会话与登录限流表。
-- `tests/`：确定性算法、密码哈希/会话/CSRF、真实本地 D1 与 Pages 产物集成测试。
+- `server/`：Worker 入口、认证、参数校验、D1 数据访问和路由；`server/ratings.ts` 集中匿名身份、评分写入与管理员评分接口。
+- `migrations/`：版本化 SQL；三张业务表、管理员会话与登录限流表，以及 V1.2 的评分与评分限流表。
+- `tests/`：确定性算法、密码哈希/会话/CSRF、匿名评分权限与防滥用、真实本地 D1 与 Pages 产物集成测试。
 - `scripts/`：本地初始化、密钥生成、构建、产物检查和 smoke 测试。
 
 ## 数据模型
@@ -22,12 +23,25 @@ Vue 3 单页应用通过同源 JSON API 调用 Cloudflare Pages Function，使�
 - `dishes`：引用 `restaurant_id`，名称、category、price_cents、weight、notes、enabled。
 - `admin_sessions`：会话令牌的 SHA-256 摘要、CSRF 令牌、创建和过期时间。
 - `admin_login_attempts`：按来源 IP 摘要统计的失败窗口和锁定时间。
+- `ratings`：评分对象类型、`restaurant_id` / `dish_id`、匿名身份摘要、星级和时间。
+- `rating_rate_limits`：按匿名身份摘要与来源 IP 摘要统计的固定窗口写入次数。
 
-每张业务表都有字符串 UUID 及 UTC ISO 创建/更新时间。数据库外键为 `RESTRICT`，没有级联删除。
+每张业务表都有字符串 UUID 及 UTC ISO 创建/更新时间。数据库外键为 `RESTRICT`，没有级联删除；`ratings` 的两个外键例外，使用 `ON DELETE CASCADE`，删除店铺或菜品时一并清理其评分，避免孤儿数据。
 
 价格为非负整数分，默认权重 1，禁止非有限或负权重。API 额外限制文本长度和数值范围。排序先按区域 `sort_order`，再按名称和 ID，确保稳定展示。
 
 `sort_order` 的整数限制由 API 校验；数据库 CHECK 只限制范围，直接绕过 API 写 SQL 仍可写入小数。这是低风险边界，不应通过导入脚本绕过 API 校验。
+
+### 评分表约束
+
+`ratings` 用 `target_type`（restaurant / dish）加两个可空外键列表达评分对象，CHECK 约束保证二者恰有一个非空，因此店铺评分与菜品评分不会混淆，菜品 ID 也无法冒充店铺 ID。
+
+- `identity_hash` 是匿名 Cookie 凭据的 SHA-256 摘要（加 `rater:` 前缀做域分隔），长度固定 64，D1 不保存原文。
+- 两个部分唯一索引 `(identity_hash, restaurant_id)` 与 `(identity_hash, dish_id)` 保证同一身份对同一对象只有一条有效评分，并作为并发重复提交的最终约束。
+- 写入使用 `INSERT ... ON CONFLICT ... DO UPDATE`：重复提交只更新星级与 `updated_at`，`created_at` 保留，评分人数不变。
+- 统计直接使用 `AVG(stars)` 与 `COUNT(*)`，只覆盖当前公开可见（自身与父级均启用）的对象。
+
+`rating_rate_limits` 保存固定窗口计数，按匿名身份摘要和来源 IP 摘要分别限流。来源 IP 只读取 Cloudflare 边缘写入的 `CF-Connecting-IP`；`X-Real-IP` 等头可由普通客户端伪造，不作为限流维度。
 
 ## 权限
 
@@ -42,9 +56,19 @@ Vue 3 单页应用通过同源 JSON API 调用 Cloudflare Pages Function，使�
 
 选择访问密钥模式的原因：PBKDF2 100,000 次迭代在本机 WebCrypto 中位数约 11.5ms，已高于 Free 的 10ms 单请求 CPU 限额量级；256 位随机密钥的 SHA-256 验证成本可忽略，且随机空间使离线暴力枚举不可行。详细测量与验收方案见 [部署说明](deployment.md)。
 
+### 匿名评分权限
+
+评分删除权限只有两种来源：原匿名 Cookie 身份，或经过认证的管理员。
+
+- 普通访客可以浏览全站统计，并用服务端下发的匿名身份提交自己的评分。
+- 原 Cookie 身份可以读取、修改、删除自己的评分；`PUT` / `DELETE` 都以 `identity_hash` 作为查询条件，其他身份的评分无法通过该路由寻址。
+- 没有身份 Cookie 的删除返回 401，身份没有该评分返回 404，两者都不会修改数据。
+- 管理员使用现有会话、同源 `Origin` 与 CSRF 校验后，可以列出并删除任意评分，但不能替用户改星级；管理员列表不返回任何身份摘要。
+- 评分写入同时校验 `Origin` 与目标同源；匿名 Cookie 为 `SameSite=Lax`，跨站写请求不会携带原身份。
+
 ## 本地历史
 
-浏览器使用 `localStorage` 保存最近 100 条推荐快照和采纳状态。历史不包含管理员凭据，不上传服务器；清除浏览器数据或换设备后无法恢复。
+浏览器使用 `localStorage` 保存用餐记录。当前页面运行期间所有推荐（含未采纳）都保留在 Pinia 内存；只有用户主动标记采纳的记录写入 `eat-decider.history.v1`，刷新后也只恢复已采纳记录。上限 100 条，超出时优先淘汰最旧的未采纳记录，其次淘汰最旧的已采纳记录。读取旧版数据时保留 `adopted=true` 的记录并迁移为只含已采纳记录的结构。历史不包含管理员凭据或评分身份，不上传服务器；清除浏览器数据或换设备后无法恢复。清空历史不会删除 D1 中的评分。
 
 ## 构建与部署
 

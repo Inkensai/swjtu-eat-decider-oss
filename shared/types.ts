@@ -12,3 +12,24 @@ export interface Filters { areaId?: string; restaurantId?: string; restaurantCat
 export interface RecommendRequest { mode: Mode; filters: Filters; avoidRecent: boolean; recentDishIds: string[] }
 export type RecommendResult = { status: 'ok'; restaurant: Restaurant; dish: Dish | null; candidateDishCount: number } | { status: 'empty'; message: string }
 export interface HistoryEntry { id: string; at: string; mode: Mode; restaurant: Restaurant; dish: Dish | null; adopted: boolean }
+export type RatingTargetType = 'restaurant' | 'dish'
+/** 全站统计；average 为 null 表示暂无评分。 */
+export interface RatingSummary { targetId: string; average: number | null; count: number }
+/** 当前匿名身份对某对象的评分。 */
+export interface MyRating { targetType: RatingTargetType; targetId: string; stars: number }
+export interface RatingOverview { restaurants: RatingSummary[]; dishes: RatingSummary[]; mine: MyRating[] }
+export interface RatingSubmission extends MyRating { average: number | null; count: number }
+/** 管理员评分列表行；不包含任何身份凭据或摘要。 */
+export interface AdminRating {
+  id: string
+  targetType: RatingTargetType
+  targetId: string
+  targetName: string
+  targetEnabled: boolean
+  restaurantId: string | null
+  restaurantName: string | null
+  stars: number
+  createdAt: string
+  updatedAt: string
+}
+export interface AdminRatingList { items: AdminRating[]; total: number }

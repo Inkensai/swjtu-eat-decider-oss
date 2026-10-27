@@ -2,7 +2,7 @@
 
 所有路径同源；实体字段使用camelCase，时间为UTC ISO字符串。成功读取返回数组，POST创建返回201实体，PATCH返回200实体，DELETE返回204空响应。
 
-错误统一为 `{ "error": { "code": "INVALID_INPUT", "message": "可读说明", "details": {} } }`。details可省略。常见状态：400输入、401无身份、403无权限/跨源/CSRF、404不存在、405方法不允许、409有关联记录、413请求过大、415非JSON、429登录限流、503认证未配置。
+错误统一为 `{ "error": { "code": "INVALID_INPUT", "message": "可读说明", "details": {} } }`。details可省略。常见状态：400输入、401无身份、403无权限/跨源/CSRF、404不存在、405方法不允许、409有关联记录、413请求过大、415非JSON、429登录或评分限流、503认证未配置。
 
 ## 公共菜单
 
@@ -34,6 +34,39 @@ mode为restaurant/dish/combo。filters还支持restaurantId、restaurantCategory
 `restaurantCategory`只筛选店铺分类。新标准值为`炒菜 / 家常菜`、`粉面 / 面食`、`快餐 / 盖饭`、`汉堡 / 炸鸡`、`火锅 / 麻辣烫`、`烧烤 / 烤肉`、`小吃 / 面点`、`轻食 / 简餐`、`饮品 / 甜品`、`其他 / 综合`。为兼容旧客户端，`火锅 / 串串`按`火锅 / 麻辣烫`匹配，`小吃 / 轻食`按原值精确匹配且不自动拆分；其他值返回400。历史空店铺分类按`其他 / 综合`参与；其他历史自定义分类只在省略该参数时参与。`category`只筛选菜品分类，两者互不替代；新标准为12类，已知旧名按兼容映射匹配，未知历史值仍可按原值精确筛选。dish模式已明确指定店铺，服务端忽略`restaurantCategory`。
 
 成功返回 `{status:"ok",restaurant,dish,candidateDishCount}`。restaurant模式dish为null。空候选是HTTP200 `{status:"empty",message}`，不是服务异常。
+
+随机选店（restaurant）只依赖店铺：未设置菜品分类、预算或排除菜品时，启用但没有录入菜品的店铺同样是有效候选，此时dish为null且candidateDishCount为0。设置上述任一依赖菜品的条件后，无菜品店铺不再参与；dish与combo模式始终要求存在有效菜品。评分不参与任何推荐权重。
+
+## 匿名评分
+
+评分对象类型为`restaurant`或`dish`，两者互不混淆；菜品ID不能当作店铺ID使用。所有正式评分直接写入D1并计入全站统计，没有本地私有评分或公开开关。
+
+匿名身份由服务端生成256位随机凭据，通过`ed_rater_id` Cookie持有：生产为`Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`（仅本地回环HTTP开发省略Secure）。D1只保存`sha256("rater:" + 凭据)`摘要，响应JSON不回显Cookie原文。客户端不能提交身份ID，所有写入以Cookie解析出的摘要为准。清除Cookie、无痕窗口或更换浏览器会得到新的匿名身份，无法再修改原身份提交的评分。
+
+`GET /api/ratings`：公开统计与当前身份状态，无需登录。
+
+```json
+{
+  "restaurants": [{ "targetId": "店铺ID", "average": 4.5, "count": 2 }],
+  "dishes": [{ "targetId": "菜品ID", "average": 5, "count": 1 }],
+  "mine": [{ "targetType": "dish", "targetId": "菜品ID", "stars": 5 }]
+}
+```
+
+只统计当前公开可见（自身与父级均启用）的对象；`average`为两位小数，`count`为有效评分人数，无评分时该对象不出现在数组里。`mine`只包含当前Cookie身份的评分，无Cookie时为空数组，且该请求不会创建身份。响应始终`Cache-Control: no-store`。
+
+`PUT /api/ratings/{restaurant|dish}/:id`：提交或更新当前身份对该对象的评分，请求体`{"stars": 1-5}`（整数）。
+
+- 成功返回200 `{targetType,targetId,stars,average,count}`；首次调用且没有Cookie时同时下发`ed_rater_id`。
+- 同一身份重复提交只更新原记录（`created_at`保留、`updated_at`刷新），评分人数不变。
+- 星级不是1–5整数、包含未知字段或不是JSON返回400；对象不存在或已停用返回404；请求体超过65536字节返回413；`Origin`与目标不同源返回403。
+- 每个身份默认每600秒允许30次写操作、每个来源IP默认120次，超出返回429 `TOO_MANY_REQUESTS`并带`Retry-After`。
+
+`DELETE /api/ratings/{restaurant|dish}/:id`：删除当前身份对该对象的评分，返回204。没有身份Cookie返回401 `IDENTITY_REQUIRED`；该身份没有这条评分返回404。其他身份的评分无法通过该路由寻址，删除只会影响Cookie对应的身份。
+
+`GET /api/admin/ratings`：管理员评分列表，需要有效会话。可选查询参数`targetType`（restaurant/dish）、`targetId`、`restaurantId`（筛选该店铺下菜品的评分）。返回`{items,total}`，`items`最多500条，按更新时间倒序；每项包含`id`、`targetType`、`targetId`、`targetName`、`targetEnabled`、`restaurantId`、`restaurantName`、`stars`、`createdAt`、`updatedAt`，不包含身份摘要或Cookie凭据。`targetType`非法返回400。
+
+`DELETE /api/admin/ratings/:id`：管理员删除任意评分，需要会话、同源`Origin`和`X-CSRF-Token`；成功204，评分不存在404。删除后公共统计立即按剩余评分重算。
 
 ## 管理员会话
 
@@ -67,4 +100,4 @@ type默认为other（canteen/nearby/other），sortOrder默认为0，enabled默�
 
 名称1–100字符，分类≤60，位置≤300，备注≤500；价格为0–100000000整数分，权重为0–1000000有限数，排序为0–1000000整数；请求体上限65536字节。
 
-删除非空区域/店铺返回409 HAS_CHILDREN，details含restaurants/dishes关联数量。数据库RESTRICT提供最终约束。不存在云端历史读取或写入接口。
+删除非空区域/店铺返回409 HAS_CHILDREN，details含restaurants/dishes关联数量。数据库RESTRICT提供最终约束；删除店铺或菜品时，其评分随外键`ON DELETE CASCADE`一并清理，不产生孤儿评分。不存在云端历史读取或写入接口。

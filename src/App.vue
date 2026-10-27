@@ -9,6 +9,7 @@ const route = useRoute()
       <RouterLink class="brand" to="/" aria-label="Eat Decider 首页"><span class="brand-mark" aria-hidden="true">食</span><span>Eat Decider<small>好好吃饭，轻松决定</small></span></RouterLink>
       <nav aria-label="主导航">
         <RouterLink to="/" :aria-current="route.path === '/' ? 'page' : undefined">帮我决定</RouterLink>
+        <RouterLink to="/menu" :aria-current="route.path === '/menu' ? 'page' : undefined">浏览菜单</RouterLink>
         <RouterLink to="/history" :aria-current="route.path === '/history' ? 'page' : undefined">我的记录</RouterLink>
         <a href="/admin" :aria-current="route.path.startsWith('/admin') ? 'page' : undefined">菜单管理</a>
       </nav>

@@ -161,6 +161,14 @@ export function validateDishCategoryMutation(values: Record<string, unknown>, cu
   if (category !== '' && !isDishCategory(category)) invalid('菜品分类必须是标准分类或留空；历史分类只能在未修改时保留')
 }
 
+export function validateRatingSubmission(value: unknown): { stars: number } {
+  const input = object(value, ['stars'])
+  if (!Object.hasOwn(input, 'stars')) invalid('请选择 1 至 5 星')
+  const stars = input.stars
+  if (typeof stars !== 'number' || !Number.isSafeInteger(stars) || stars < 1 || stars > 5) invalid('评分必须是 1 至 5 的整数')
+  return { stars }
+}
+
 export function validateRecommend(value: unknown): RecommendRequest {
   const input = object(value, ['mode', 'filters', 'avoidRecent', 'recentDishIds'])
   const mode = input.mode

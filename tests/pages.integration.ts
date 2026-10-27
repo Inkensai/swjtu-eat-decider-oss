@@ -5,7 +5,8 @@ import { fileURLToPath, URL as NodeURL } from 'node:url'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare'
 import { SESSION_COOKIE } from '../server/auth'
-import type { Area, Dish, Restaurant } from '../shared/types'
+import { RATER_COOKIE } from '../server/ratings'
+import type { AdminRatingList, Area, Dish, Restaurant } from '../shared/types'
 import { DEFAULT_RESTAURANT_CATEGORY } from '../shared/categories'
 import { TEST_ADMIN_KEY, accessKeyHash, findCookie, setCookies } from './support'
 
@@ -101,6 +102,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.batch([
+    db.prepare('DELETE FROM ratings'),
+    db.prepare('DELETE FROM rating_rate_limits'),
     ...['dishes', 'restaurants', 'areas'].map(table => db.prepare(`DELETE FROM ${table}`)),
     db.prepare('DELETE FROM admin_sessions'),
     db.prepare('DELETE FROM admin_login_attempts'),
@@ -267,6 +270,39 @@ describe('真实 Pages advanced-mode 构建产物', () => {
     expect((await adminCall('/api/admin/areas')).status).toBe(401)
   })
 
+  it('真实 Pages 产物提供匿名评分：写入、更新、删除与管理员清理', async () => {
+    const first = await call(`/api/ratings/dish/${seedDish}`, { method: 'PUT', body: { stars: 5 } })
+    expect(first.status).toBe(200)
+    expect(await first.json()).toMatchObject({ targetType: 'dish', targetId: seedDish, stars: 5, average: 5, count: 1 })
+    const cookie = findCookie(first, RATER_COOKIE)
+    expect(cookie).toMatch(/^ed_rater_id=[A-Za-z0-9_-]{43}$/)
+
+    const overview = await call('/api/ratings', { headers: { Cookie: cookie } })
+    expect(await overview.json()).toEqual({
+      restaurants: [],
+      dishes: [{ targetId: seedDish, average: 5, count: 1 }],
+      mine: [{ targetType: 'dish', targetId: seedDish, stars: 5 }],
+    })
+
+    const updated = await call(`/api/ratings/dish/${seedDish}`, { method: 'PUT', body: { stars: 4 }, headers: { Cookie: cookie } })
+    expect(await updated.json()).toMatchObject({ stars: 4, average: 4, count: 1 })
+    expect((await call(`/api/ratings/dish/${seedDish}`, { method: 'PUT', body: { stars: 4 }, headers: { Origin: 'https://attacker.example' } })).status).toBe(403)
+
+    await loginAsAdmin()
+    const list = await adminCall('/api/admin/ratings')
+    const ratings = await list.json() as AdminRatingList
+    expect(ratings.total).toBe(1)
+    expect(ratings.items[0]).toMatchObject({ targetType: 'dish', targetName: '测试面', stars: 4, restaurantId: seedRestaurant })
+    expect((await adminCall(`/api/admin/ratings/${ratings.items[0]!.id}`, { method: 'DELETE' })).status).toBe(204)
+    expect(await (await call('/api/ratings')).json()).toMatchObject({ dishes: [], mine: [] })
+
+    const second = await call(`/api/ratings/restaurant/${seedRestaurant}`, { method: 'PUT', body: { stars: 3 } })
+    const secondCookie = findCookie(second, RATER_COOKIE)
+    expect(second.status).toBe(200)
+    expect((await call(`/api/ratings/restaurant/${seedRestaurant}`, { method: 'DELETE', headers: { Cookie: secondCookie } })).status).toBe(204)
+    expect(await (await call('/api/ratings')).json()).toMatchObject({ restaurants: [] })
+  })
+
   it('错误凭据、缺少 CSRF 与跨源写入都被拒绝', async () => {
     const wrong = await call('/api/admin/session', { method: 'POST', body: { password: 'wrong-access-key' } })
     expect(wrong.status).toBe(401)
@@ -281,7 +317,7 @@ describe('真实 Pages advanced-mode 构建产物', () => {
 
   it('ASSETS 提供真实 SPA 页面、JS/CSS；管理页面公开且由前端显示登录表单', async () => {
     const expectedHtml = await readFile(new NodeURL('../dist/pages/index.html', import.meta.url), 'utf8')
-    for (const path of ['/', '/history', '/admin']) {
+    for (const path of ['/', '/menu', '/history', '/admin']) {
       const response = await call(path, { headers: { Accept: 'text/html' } })
       expect(response.status).toBe(200)
       expect(await response.text()).toBe(expectedHtml)
