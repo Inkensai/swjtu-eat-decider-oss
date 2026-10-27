@@ -14,4 +14,10 @@ export interface Env {
   ADMIN_LOGIN_MAX_ATTEMPTS?: string
   /** 登录限流窗口（秒），默认 900。 */
   ADMIN_LOGIN_WINDOW_SECONDS?: string
+  /** 同一匿名身份在限流窗口内允许的评分写入次数，默认 30。 */
+  RATING_RATE_LIMIT?: string
+  /** 同一来源 IP 在限流窗口内允许的评分写入次数，默认 120。 */
+  RATING_IP_RATE_LIMIT?: string
+  /** 评分限流窗口（秒），默认 600。 */
+  RATING_RATE_WINDOW_SECONDS?: string
 }

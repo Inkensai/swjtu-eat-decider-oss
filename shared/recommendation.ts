@@ -70,13 +70,23 @@ export function recommend(
     }
   }
 
-  const candidates = restaurants.filter(restaurant => dishesByRestaurant.get(restaurant.id)!.length > 0)
+  // 随机选店不依赖具体菜品：没有菜品分类、预算或排除菜品时，
+  // 启用但尚未录入菜品的店铺同样可以参与随机选择（dish 返回 null）。
+  const requiresDishes = request.mode !== 'restaurant'
+    || filters.category !== undefined
+    || filters.maxPriceCents !== undefined
+    || (filters.excludedDishIds?.length ?? 0) > 0
+  const candidates = requiresDishes
+    ? restaurants.filter(restaurant => dishesByRestaurant.get(restaurant.id)!.length > 0)
+    : restaurants
   if (candidates.length === 0) {
     return {
       status: 'empty',
       message: restaurantCategory
         ? `没有符合「${restaurantCategory}」分类和当前条件的店铺或菜品，请放宽筛选条件`
-        : '没有符合条件的菜品，请放宽筛选条件',
+        : requiresDishes
+          ? '没有符合条件的菜品，请放宽筛选条件'
+          : '没有符合条件的店铺，请放宽筛选条件',
     }
   }
 

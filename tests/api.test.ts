@@ -79,6 +79,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   await env.DB.batch([
     ...['dishes', 'restaurants', 'areas'].map(table => env.DB.prepare(`DELETE FROM ${table}`)),
+    env.DB.prepare('DELETE FROM ratings'),
+    env.DB.prepare('DELETE FROM rating_rate_limits'),
     env.DB.prepare('DELETE FROM admin_sessions'),
     env.DB.prepare('DELETE FROM admin_login_attempts'),
   ])
@@ -309,7 +311,13 @@ describe('菜单 API 与真实本地 D1', () => {
     expect(await (await call('/api/recommend', 'POST', { mode: 'dish', filters: { restaurantId: restaurant.id } }, {}, false)).json()).toMatchObject({ status: 'empty' })
     await call(`/api/admin/restaurants/${restaurant.id}`, 'PATCH', { enabled: true })
     await call(`/api/admin/dishes/${dish.id}`, 'PATCH', { enabled: false })
-    expect(await (await call('/api/recommend', 'POST', { mode: 'restaurant' }, {}, false)).json()).toMatchObject({ status: 'empty' })
+    // 随机选店不依赖具体菜品：菜品停用后仍可选择该店铺，但 dish 为 null。
+    expect(await (await call('/api/recommend', 'POST', { mode: 'restaurant' }, {}, false)).json())
+      .toMatchObject({ status: 'ok', restaurant: { id: restaurant.id }, dish: null, candidateDishCount: 0 })
+    for (const mode of ['dish', 'combo']) {
+      expect(await (await call('/api/recommend', 'POST', { mode, filters: { restaurantId: restaurant.id } }, {}, false)).json())
+        .toMatchObject({ status: 'empty' })
+    }
   })
 
   it('非空父项删除返回关联数量，数据库外键同时拒绝级联丢失', async () => {

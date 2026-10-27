@@ -49,9 +49,10 @@ describe('recommendation candidates and modes', () => {
     expect(recommend(data, request()).status).toBe('empty')
   })
 
-  it('restaurant mode only returns a restaurant with eligible dishes', () => {
-    const result = recommend(menu([dish()], [restaurant(), restaurant('empty')]), request('restaurant', {}), () => 0.99)
-    expect(result).toMatchObject({ status: 'ok', restaurant: { id: 'r1' }, dish: null, candidateDishCount: 1 })
+  it('restaurant mode draws from every enabled restaurant and reports its dish count', () => {
+    const data = menu([dish()], [restaurant(), restaurant('empty')])
+    expect(recommend(data, request('restaurant', {}), () => 0)).toMatchObject({ status: 'ok', restaurant: { id: 'r1' }, dish: null, candidateDishCount: 1 })
+    expect(recommend(data, request('restaurant', {}), () => 0.99)).toMatchObject({ status: 'ok', restaurant: { id: 'empty' }, dish: null, candidateDishCount: 0 })
   })
 
   it.each([[0, 'r1'], [0.4999, 'r1'], [0.5, 'r2'], [0.9999, 'r2']] as const)('uniformly selects restaurants at draw %s', (value, id) => {
@@ -193,6 +194,47 @@ describe('restaurant and dish category filtering', () => {
     expect(recommend(data, request('combo', { restaurantCategory: '火锅 / 麻辣烫' }))).toEqual({
       status: 'empty',
       message: '没有符合「火锅 / 麻辣烫」分类和当前条件的店铺或菜品，请放宽筛选条件',
+    })
+  })
+})
+
+describe('restaurant mode with shops that have no dishes', () => {
+  const emptyShop = menu([dish('only-dish', 'full'), dish('spare', 'full')], [restaurant('full'), restaurant('empty')])
+
+  it('allows an enabled shop without dishes when no dish-dependent filter is set', () => {
+    expect(recommend(emptyShop, request('restaurant', {}), () => 0.99)).toMatchObject({
+      status: 'ok', restaurant: { id: 'empty' }, dish: null, candidateDishCount: 0,
+    })
+    expect(recommend(menu([], [restaurant('empty')], [area()]), request('restaurant', {}), () => 0)).toMatchObject({
+      status: 'ok', restaurant: { id: 'empty' }, dish: null, candidateDishCount: 0,
+    })
+  })
+
+  it.each([
+    ['category', { category: '米饭' }, 2],
+    ['budget', { maxPriceCents: 2000 }, 2],
+    ['excluded dishes', { excludedDishIds: ['only-dish'] }, 1],
+  ])('keeps requiring dishes when a %s filter is set', (_label, filters, count) => {
+    expect(recommend(emptyShop, request('restaurant', filters as Filters), () => 0.99)).toMatchObject({
+      status: 'ok', restaurant: { id: 'full' }, candidateDishCount: count,
+    })
+    expect(recommend(menu([], [restaurant('empty')]), request('restaurant', filters as Filters))).toMatchObject({ status: 'empty' })
+  })
+
+  it('still requires dishes for dish and combo modes', () => {
+    const data = menu([], [restaurant('empty')])
+    expect(recommend(data, request('dish', { restaurantId: 'empty' }))).toMatchObject({ status: 'empty' })
+    expect(recommend(data, request('combo', {}))).toMatchObject({ status: 'empty' })
+  })
+
+  it('ignores recent-dish options because they do not narrow restaurants', () => {
+    expect(recommend(emptyShop, request('restaurant', {}, { avoidRecent: true, recentDishIds: ['only-dish'] }), () => 0.99))
+      .toMatchObject({ status: 'ok', restaurant: { id: 'empty' } })
+  })
+
+  it('reports an explicit empty result when every shop is excluded', () => {
+    expect(recommend(emptyShop, request('restaurant', { excludedRestaurantIds: ['full', 'empty'] }))).toEqual({
+      status: 'empty', message: '没有符合条件的店铺，请放宽筛选条件',
     })
   })
 })

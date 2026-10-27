@@ -1,9 +1,10 @@
-import type { Area, Dish, Menu, Resource, Restaurant } from '../shared/types'
+import type { Area, Dish, Menu, RatingTargetType, Resource, Restaurant } from '../shared/types'
 import { recommend } from '../shared/recommendation'
 import { canonicalDishCategory, normalizeRestaurantCategory } from '../shared/categories'
 import { authenticate, requireCsrf, requireSameOrigin } from './auth'
 import type { Env } from './env'
 import { HttpError, json } from './http'
+import { handleAdminRatings, handleRatingMutation, handleRatingsOverview } from './ratings'
 import { handleAdminSession } from './session'
 import { readJson, readOptionalJson, validateDishCategoryMutation, validateId, validateMutation, validateRecommend, validateRestaurantCategoryMutation } from './validation'
 
@@ -21,6 +22,13 @@ function entity(resource: Resource, row: Row): Entity {
   if (resource === 'areas') return { ...common, type: row.type as Area['type'], sortOrder: row.sort_order as number }
   if (resource === 'restaurants') return { ...common, areaId: row.area_id as string, category: row.category as string, location: row.location as string }
   return { ...common, restaurantId: row.restaurant_id as string, category: row.category as string, priceCents: row.price_cents as number, weight: row.weight as number, notes: row.notes as string }
+}
+
+function decodeSegment(value: string): string {
+  try { return decodeURIComponent(value) }
+  catch {
+    throw new HttpError(400, 'INVALID_INPUT', 'ID 编码无效')
+  }
 }
 
 async function get(env: Env, resource: Resource, id: string): Promise<Entity> {
@@ -95,6 +103,15 @@ async function remove(env: Env, resource: Resource, id: string): Promise<Respons
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   if (url.pathname === '/api/admin/session') return handleAdminSession(request, env)
+  if (url.pathname === '/api/ratings') return handleRatingsOverview(request, env)
+  const ratingMatch = /^\/api\/ratings\/(restaurant|dish)\/([^/]+)$/.exec(url.pathname)
+  if (ratingMatch) {
+    return handleRatingMutation(request, env, ratingMatch[1] as RatingTargetType, decodeSegment(ratingMatch[2]!))
+  }
+  const adminRatingMatch = /^\/api\/admin\/ratings(?:\/([^/]+))?$/.exec(url.pathname)
+  if (adminRatingMatch) {
+    return handleAdminRatings(request, env, adminRatingMatch[1] === undefined ? null : decodeSegment(adminRatingMatch[1]))
+  }
   if (url.pathname === '/api/recommend' && request.method === 'POST') {
     const input = validateRecommend(await readJson(request))
     const [areas, restaurants, dishes] = await Promise.all([
@@ -114,13 +131,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     }
   }
   let id: string | null = null
-  if (match[3]) {
-    try { id = validateId(decodeURIComponent(match[3])) }
-    catch (error) {
-      if (error instanceof HttpError) throw error
-      throw new HttpError(400, 'INVALID_INPUT', 'ID 编码无效')
-    }
-  }
+  if (match[3]) id = validateId(decodeSegment(match[3]))
   if (request.method === 'GET' && !id) return json(await list(env, resource, admin, url))
   if (!admin) throw new HttpError(404, 'NOT_FOUND', 'API 不存在')
   if (request.method === 'DELETE' && id) {

@@ -26,19 +26,25 @@ const activeAreas = computed(() => menu.areas.filter((area) => area.enabled))
 const activeRestaurants = computed(() => menu.restaurants.filter((restaurant) => restaurant.enabled && activeAreas.value.some((area) => area.id === restaurant.areaId)))
 const dishRestaurantIds = computed(() => new Set(menu.dishes.filter((dish) => dish.enabled).map((dish) => dish.restaurantId)))
 const areaRestaurants = computed(() => activeRestaurants.value.filter((restaurant) => !areaId.value || restaurant.areaId === areaId.value))
+// 随机选店不依赖具体菜品：未设置菜品分类、预算或排除菜品时，没有录入菜品的店铺也是有效候选。
+const requiresDishes = computed(() => mode.value !== 'restaurant'
+  || Boolean(category.value) || Boolean(maxPrice.value.trim()) || excludedDishIds.value.length > 0)
+const eligibleRestaurants = computed(() => areaRestaurants.value.filter((restaurant) => !requiresDishes.value
+  || dishRestaurantIds.value.has(restaurant.id)))
 const restaurantCategoryCounts = computed(() => {
   const counts = Object.fromEntries(RESTAURANT_CATEGORIES.map((item) => [item, 0])) as Record<RestaurantCategory, number>
-  for (const restaurant of areaRestaurants.value) {
-    // 与服务端推荐候选保持一致：没有启用菜品的店铺不参与类型计数。
-    if (!dishRestaurantIds.value.has(restaurant.id)) continue
+  for (const restaurant of eligibleRestaurants.value) {
+    // 与服务端推荐候选保持一致：只有依赖菜品的模式才排除没有菜品的店铺。
     const effective = normalizeRestaurantCategory(restaurant.category)
     if (Object.hasOwn(counts, effective)) counts[effective as RestaurantCategory]++
   }
   return counts
 })
-const restaurants = computed(() => areaRestaurants.value.filter((restaurant) => mode.value === 'dish'
+const restaurants = computed(() => eligibleRestaurants.value.filter((restaurant) => mode.value === 'dish'
   || !restaurantCategory.value
   || normalizeRestaurantCategory(restaurant.category) === restaurantCategory.value))
+const candidateRestaurants = computed(() => restaurants.value.filter((restaurant) => (!restaurantId.value || restaurant.id === restaurantId.value)
+  && !excludedRestaurantIds.value.includes(restaurant.id)))
 const baseDishes = computed(() => menu.dishes.filter((dish) => dish.enabled
   && restaurants.value.some((restaurant) => restaurant.id === dish.restaurantId)
   && (!restaurantId.value || dish.restaurantId === restaurantId.value)))
@@ -137,7 +143,7 @@ function resetFilters() { category.value = ''; maxPrice.value = ''; excludedRest
           </div>
         </details>
         <label class="check-label recent-switch"><input v-model="avoidRecent" type="checkbox"><span>换换口味<small>降低最近 5 次推荐菜品的出现概率</small></span><span class="switch-label">{{ avoidRecent ? '已开启' : '可选' }}</span></label>
-        <button class="primary decide-button" type="submit" :disabled="!activeRestaurants.length">{{ busy ? '正在为你挑选…' : menu.loading ? '正在准备菜单…' : '帮我决定' }} <span aria-hidden="true">↗</span></button>
+        <button class="primary decide-button" type="submit" :disabled="!candidateRestaurants.length">{{ busy ? '正在为你挑选…' : menu.loading ? '正在准备菜单…' : '帮我决定' }} <span aria-hidden="true">↗</span></button>
       </fieldset>
       <p v-if="!menu.loading && !menu.error && !activeRestaurants.length" class="inline-hint">菜单还是空的，请管理员先添加区域、店铺和菜品。</p>
       <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
@@ -154,7 +160,7 @@ function resetFilters() { category.value = ''; maxPrice.value = ''; excludedRest
         <strong v-if="result.dish" class="result-price">{{ money(result.dish.priceCents) }}</strong>
         <p v-if="result.dish?.notes" class="result-notes">{{ result.dish.notes }}</p>
         <p v-if="result.restaurant.location" class="result-location">{{ result.restaurant.location }}</p>
-        <div class="result-actions"><button type="button" class="primary" :disabled="busy" @click="history.adopt(resultHistoryId)">{{ selectedEntry?.adopted ? '✓ 就吃这个，已采纳' : '就吃这个' }}</button><button type="button" class="secondary" :disabled="busy" @click="decide">再来一次</button></div>
+        <div class="result-actions"><button v-if="selectedEntry" type="button" class="primary" :disabled="busy" @click="history.adopt(resultHistoryId)">{{ selectedEntry.adopted ? '✓ 就吃这个，已采纳' : '就吃这个' }}</button><span v-else class="subtle result-cap">记录已满，本条推荐未加入历史</span><button type="button" class="secondary" :disabled="busy" @click="decide">再来一次</button></div>
       </template>
       <template v-else-if="result?.status === 'empty'"><span class="empty-symbol" aria-hidden="true">⌕</span><h2>还没找到合适的</h2><p>{{ result.message }}</p><p class="subtle">试着放宽预算，或减少一些排除项。</p></template>
       <template v-else><div class="food-art empty-art" aria-hidden="true"><span class="plate"><i></i><b></b><em></em></span><span class="chopstick one"></span><span class="chopstick two"></span></div><span class="result-placeholder-label">把选择交给一点惊喜</span><h2>好吃的，正在等你</h2><p>按下按钮，发现今天的心动一餐。</p><span class="small-spark" aria-hidden="true">✦</span></template>
