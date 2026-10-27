@@ -1,5 +1,5 @@
 import type { Dish, Menu, RecommendRequest, RecommendResult } from './types'
-import { normalizeRestaurantCategory } from './categories'
+import { canonicalDishCategory, normalizeRestaurantCategory } from './categories'
 
 function randomValue(rng: () => number): number {
   const value = rng()
@@ -49,7 +49,10 @@ export function recommend(
   const excludedRestaurants = new Set(filters.excludedRestaurantIds ?? [])
   const excludedDishes = new Set(filters.excludedDishIds ?? [])
   // 店内选菜已明确指定店铺，不再让店铺分类额外收窄候选。
-  const restaurantCategory = request.mode === 'dish' ? undefined : filters.restaurantCategory
+  const restaurantCategory = request.mode === 'dish' || !filters.restaurantCategory
+    ? undefined
+    : normalizeRestaurantCategory(filters.restaurantCategory)
+  const dishCategory = filters.category ? canonicalDishCategory(filters.category) : undefined
   const restaurants = menu.restaurants.filter(restaurant => restaurant.enabled
     && areaIds.has(restaurant.areaId)
     && (!filters.restaurantId || restaurant.id === filters.restaurantId)
@@ -60,7 +63,7 @@ export function recommend(
   for (const dish of menu.dishes) {
     const candidates = dishesByRestaurant.get(dish.restaurantId)
     if (candidates && dish.enabled
-      && (!filters.category || dish.category === filters.category)
+      && (!dishCategory || canonicalDishCategory(dish.category) === dishCategory)
       && (filters.maxPriceCents === undefined || dish.priceCents <= filters.maxPriceCents)
       && !excludedDishes.has(dish.id)) {
       candidates.push(dish)

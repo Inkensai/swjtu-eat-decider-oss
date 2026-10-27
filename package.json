@@ -1,7 +1,7 @@
 {
   "name": "eat-decider",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "校园美食决策助手：共享菜单、三种推荐模式与管理员维护。",
   "license": "MIT",
   "type": "module",

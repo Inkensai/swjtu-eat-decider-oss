@@ -7,7 +7,7 @@ import worker from '../server/index'
 import type { Env } from '../server/env'
 import { SESSION_COOKIE } from '../server/auth'
 import type { Area, Dish, Restaurant } from '../shared/types'
-import { DEFAULT_RESTAURANT_CATEGORY, RESTAURANT_CATEGORIES } from '../shared/categories'
+import { DEFAULT_RESTAURANT_CATEGORY, DISH_CATEGORIES, RESTAURANT_CATEGORIES } from '../shared/categories'
 import { TEST_ADMIN_PASSWORD, findCookie, passwordHash } from './support'
 
 const origin = 'http://localhost'
@@ -56,8 +56,8 @@ async function create<T>(resource: string, body: unknown): Promise<T> {
 
 async function menu() {
   const area = await create<Area>('areas', { name: '测试区域', type: 'canteen' })
-  const restaurant = await create<Restaurant>('restaurants', { areaId: area.id, name: '测试店铺', category: '小吃 / 轻食' })
-  const dish = await create<Dish>('dishes', { restaurantId: restaurant.id, name: '测试面', category: '面食', priceCents: 1250, weight: 2 })
+  const restaurant = await create<Restaurant>('restaurants', { areaId: area.id, name: '测试店铺', category: '小吃 / 面点' })
+  const dish = await create<Dish>('dishes', { restaurantId: restaurant.id, name: '测试面', category: '粉面 / 米线', priceCents: 1250, weight: 2 })
   return { area, restaurant, dish }
 }
 
@@ -95,13 +95,14 @@ describe('菜单 API 与真实本地 D1', () => {
     expect(dish.id).toMatch(/^[\da-f-]{36}$/)
     expect(new Date(dish.createdAt).toISOString()).toBe(dish.createdAt)
     expect(dish).not.toHaveProperty('restaurant_id')
-    expect(await (await call(`/api/dishes?areaId=${area.id}&restaurantId=${restaurant.id}&category=${encodeURIComponent('面食')}`, 'GET', undefined, {}, false)).json()).toEqual([dish])
+    expect(await (await call(`/api/dishes?areaId=${area.id}&restaurantId=${restaurant.id}&category=${encodeURIComponent('粉面 / 米线')}`, 'GET', undefined, {}, false)).json()).toEqual([dish])
+    expect(await (await call(`/api/dishes?category=${encodeURIComponent('粉面')}`, 'GET', undefined, {}, false)).json()).toEqual([dish])
     expect(await (await call('/api/dishes?category=missing', 'GET', undefined, {}, false)).json()).toEqual([])
     const decision = await call('/api/recommend', 'POST', { mode: 'combo', filters: { maxPriceCents: 1250 }, recentDishIds: [], avoidRecent: true }, {}, false)
     expect(await decision.json()).toMatchObject({ status: 'ok', restaurant: { id: restaurant.id }, dish: { id: dish.id }, candidateDishCount: 1 })
     const update = await call(`/api/admin/dishes/${dish.id}`, 'PATCH', { name: '新菜名', priceCents: 1300, enabled: false })
     expect(update.status).toBe(200)
-    expect(await update.json()).toMatchObject({ id: dish.id, name: '新菜名', enabled: false, createdAt: dish.createdAt, category: '面食' })
+    expect(await update.json()).toMatchObject({ id: dish.id, name: '新菜名', enabled: false, createdAt: dish.createdAt, category: '粉面 / 米线' })
     expect(await (await call('/api/dishes', 'GET', undefined, {}, false)).json()).toEqual([])
     expect(await (await call('/api/admin/dishes')).json()).toHaveLength(1)
     for (const [resource, id] of [['dishes', dish.id], ['restaurants', restaurant.id], ['areas', area.id]]) {
@@ -119,7 +120,7 @@ describe('菜单 API 与真实本地 D1', () => {
       const standard = await create<Restaurant>('restaurants', { areaId: area.id, name: `标准分类-${category}`, category })
       expect(standard.category).toBe(category)
     }
-    for (const category of ['川菜', '', '其他']) {
+    for (const category of ['川菜', '', '其他', '火锅 / 串串', '小吃 / 轻食']) {
       const response = await call('/api/admin/restaurants', 'POST', { areaId: area.id, name: `非法分类-${category}`, category })
       expect(response.status).toBe(400)
       expect(await response.json()).toMatchObject({ error: { code: 'INVALID_INPUT' } })
@@ -131,10 +132,16 @@ describe('菜单 API 与真实本地 D1', () => {
         .bind('legacy-custom-category', area.id, now, now),
       env.DB.prepare("INSERT INTO restaurants (id, area_id, name, category, location, enabled, created_at, updated_at) VALUES (?, ?, '旧空分类店铺', '', '', 1, ?, ?)")
         .bind('legacy-empty-category', area.id, now, now),
+      env.DB.prepare("INSERT INTO restaurants (id, area_id, name, category, location, enabled, created_at, updated_at) VALUES (?, ?, '旧火锅店铺', '火锅 / 串串', '', 1, ?, ?)")
+        .bind('legacy-firepot-category', area.id, now, now),
+      env.DB.prepare("INSERT INTO restaurants (id, area_id, name, category, location, enabled, created_at, updated_at) VALUES (?, ?, '旧小吃店铺', '小吃 / 轻食', '', 1, ?, ?)")
+        .bind('legacy-snack-category', area.id, now, now),
     ])
     let restaurants = await (await call('/api/admin/restaurants')).json() as Restaurant[]
     expect(restaurants.find((restaurant) => restaurant.id === 'legacy-custom-category')?.category).toBe('川菜')
     expect(restaurants.find((restaurant) => restaurant.id === 'legacy-empty-category')?.category).toBe('')
+    expect(restaurants.find((restaurant) => restaurant.id === 'legacy-firepot-category')?.category).toBe('火锅 / 串串')
+    expect(restaurants.find((restaurant) => restaurant.id === 'legacy-snack-category')?.category).toBe('小吃 / 轻食')
 
     const customSame = await call('/api/admin/restaurants/legacy-custom-category', 'PATCH', { category: '川菜' })
     expect(customSame.status).toBe(200)
@@ -142,6 +149,12 @@ describe('菜单 API 与真实本地 D1', () => {
     const blankSame = await call('/api/admin/restaurants/legacy-empty-category', 'PATCH', { category: '' })
     expect(blankSame.status).toBe(200)
     expect(await blankSame.json()).toMatchObject({ category: '' })
+    const firepotSame = await call('/api/admin/restaurants/legacy-firepot-category', 'PATCH', { name: '旧火锅店铺改名', category: '火锅 / 串串' })
+    expect(firepotSame.status).toBe(200)
+    expect(await firepotSame.json()).toMatchObject({ name: '旧火锅店铺改名', category: '火锅 / 串串' })
+    const snackSame = await call('/api/admin/restaurants/legacy-snack-category', 'PATCH', { name: '旧小吃店铺改名', category: '小吃 / 轻食' })
+    expect(snackSame.status).toBe(200)
+    expect(await snackSame.json()).toMatchObject({ name: '旧小吃店铺改名', category: '小吃 / 轻食' })
 
     const customUpdate = await call('/api/admin/restaurants/legacy-custom-category', 'PATCH', { name: '只改名称', category: '川菜' })
     expect(await customUpdate.json()).toMatchObject({ category: '川菜', name: '只改名称' })
@@ -160,6 +173,49 @@ describe('菜单 API 与真实本地 D1', () => {
     expect(await standardized.json()).toMatchObject({ category: '粉面 / 面食' })
   })
 
+  it('菜品分类只接受新标准或不分类，历史分类仅可原值保留', async () => {
+    const area = await create<Area>('areas', { name: '菜品分类测试区域' })
+    const restaurant = await create<Restaurant>('restaurants', { areaId: area.id, name: '菜品分类测试店铺', category: '快餐 / 盖饭' })
+    for (const category of DISH_CATEGORIES) {
+      const standard = await create<Dish>('dishes', { restaurantId: restaurant.id, name: `标准菜品-${category}`, category, priceCents: 1000 })
+      expect(standard.category).toBe(category)
+    }
+    const uncategorized = await create<Dish>('dishes', { restaurantId: restaurant.id, name: '不分类菜品', category: '', priceCents: 1000 })
+    expect(uncategorized.category).toBe('')
+    for (const category of ['米饭 / 盖饭', '粉面', '主菜', '小吃', '面食']) {
+      expect((await call('/api/admin/dishes', 'POST', {
+        restaurantId: restaurant.id, name: `非法菜品分类-${category}`, category, priceCents: 1000,
+      })).status).toBe(400)
+    }
+
+    const now = '2026-10-26T00:00:00.000Z'
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO dishes (id, restaurant_id, name, category, price_cents, weight, notes, enabled, created_at, updated_at) VALUES (?, ?, '旧映射菜品', '米饭 / 盖饭', 1000, 1, '', 1, ?, ?)")
+        .bind('legacy-mapped-dish', restaurant.id, now, now),
+      env.DB.prepare("INSERT INTO dishes (id, restaurant_id, name, category, price_cents, weight, notes, enabled, created_at, updated_at) VALUES (?, ?, '未知历史菜品', '宵夜', 1000, 1, '', 1, ?, ?)")
+        .bind('legacy-unknown-dish', restaurant.id, now, now),
+    ])
+    let dishes = await (await call('/api/admin/dishes')).json() as Dish[]
+    expect(dishes.find((dish) => dish.id === 'legacy-mapped-dish')?.category).toBe('米饭 / 盖饭')
+    expect(dishes.find((dish) => dish.id === 'legacy-unknown-dish')?.category).toBe('宵夜')
+
+    const mappedSame = await call('/api/admin/dishes/legacy-mapped-dish', 'PATCH', { name: '旧映射菜品改名', category: '米饭 / 盖饭' })
+    expect(mappedSame.status).toBe(200)
+    expect(await mappedSame.json()).toMatchObject({ name: '旧映射菜品改名', category: '米饭 / 盖饭' })
+    const unknownSame = await call('/api/admin/dishes/legacy-unknown-dish', 'PATCH', { name: '未知历史菜品改名', category: '宵夜' })
+    expect(unknownSame.status).toBe(200)
+    expect(await unknownSame.json()).toMatchObject({ name: '未知历史菜品改名', category: '宵夜' })
+    expect((await call('/api/admin/dishes/legacy-mapped-dish', 'PATCH', { category: '粉面' })).status).toBe(400)
+    expect((await call('/api/admin/dishes/legacy-unknown-dish', 'PATCH', { category: '烧烤' })).status).toBe(400)
+    dishes = await (await call('/api/admin/dishes')).json() as Dish[]
+    expect(dishes.find((dish) => dish.id === 'legacy-mapped-dish')?.category).toBe('米饭 / 盖饭')
+    expect(dishes.find((dish) => dish.id === 'legacy-unknown-dish')?.category).toBe('宵夜')
+
+    const upgraded = await call('/api/admin/dishes/legacy-mapped-dish', 'PATCH', { category: '米饭 / 套餐' })
+    expect(upgraded.status).toBe(200)
+    expect(await upgraded.json()).toMatchObject({ category: '米饭 / 套餐' })
+  })
+
   it('按店铺分类真实筛选推荐，并保持菜品分类和店内选菜语义独立', async () => {
     const area = await create<Area>('areas', { name: '分类推荐区域' })
     const noodle = await create<Restaurant>('restaurants', { areaId: area.id, name: '粉面店', category: '粉面 / 面食' })
@@ -170,14 +226,43 @@ describe('菜单 API 与真实本地 D1', () => {
         .bind('legacy-empty-category', area.id, now, now),
       env.DB.prepare("INSERT INTO restaurants (id, area_id, name, category, location, enabled, created_at, updated_at) VALUES (?, ?, '历史川菜店', '川菜', '', 1, ?, ?)")
         .bind('legacy-custom-category', area.id, now, now),
+      env.DB.prepare("INSERT INTO restaurants (id, area_id, name, category, location, enabled, created_at, updated_at) VALUES (?, ?, '旧火锅店', '火锅 / 串串', '', 1, ?, ?)")
+        .bind('legacy-firepot', area.id, now, now),
+      env.DB.prepare("INSERT INTO restaurants (id, area_id, name, category, location, enabled, created_at, updated_at) VALUES (?, ?, '旧小吃店', '小吃 / 轻食', '', 1, ?, ?)")
+        .bind('legacy-snack', area.id, now, now),
     ])
-    await create<Dish>('dishes', { restaurantId: noodle.id, name: '粉面店的盖饭菜', category: '米饭 / 盖饭', priceCents: 1000 })
-    await create<Dish>('dishes', { restaurantId: rice.id, name: '盖饭店的粉面菜', category: '粉面', priceCents: 1100 })
+    await create<Dish>('dishes', { restaurantId: noodle.id, name: '粉面店的新盖饭菜', category: '米饭 / 套餐', priceCents: 1000 })
+    await create<Dish>('dishes', { restaurantId: rice.id, name: '盖饭店的粉面菜', category: '粉面 / 米线', priceCents: 1100 })
     await create<Dish>('dishes', { restaurantId: 'legacy-empty-category', name: '旧空分类菜', category: '', priceCents: 1200 })
     await create<Dish>('dishes', { restaurantId: 'legacy-custom-category', name: '历史分类菜', category: '其他', priceCents: 1300 })
+    await create<Dish>('dishes', { restaurantId: 'legacy-firepot', name: '旧火锅店的麻辣烫', category: '火锅 / 麻辣烫', priceCents: 1400 })
+    await create<Dish>('dishes', { restaurantId: 'legacy-snack', name: '旧小吃店的面点', category: '饺馄 / 面点', priceCents: 1500 })
 
     const filtered = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { restaurantCategory: '粉面 / 面食' } }, {}, false)).json()
-    expect(filtered).toMatchObject({ status: 'ok', restaurant: { id: noodle.id }, dish: { category: '米饭 / 盖饭' } })
+    expect(filtered).toMatchObject({ status: 'ok', restaurant: { id: noodle.id }, dish: { category: '米饭 / 套餐' } })
+
+    const oldDishFilter = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { category: '米饭 / 盖饭' } }, {}, false)).json()
+    expect(oldDishFilter).toMatchObject({ status: 'ok', restaurant: { id: noodle.id }, dish: { category: '米饭 / 套餐' } })
+    const newDishFilter = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { category: '米饭 / 套餐' } }, {}, false)).json()
+    expect(newDishFilter).toMatchObject({ status: 'ok', restaurant: { id: noodle.id } })
+
+    const firepotNew = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { restaurantCategory: '火锅 / 麻辣烫' } }, {}, false)).json()
+    expect(firepotNew).toMatchObject({ status: 'ok', restaurant: { id: 'legacy-firepot' } })
+    const firepotOld = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { restaurantCategory: '火锅 / 串串' } }, {}, false)).json()
+    expect(firepotOld).toMatchObject({ status: 'ok', restaurant: { id: 'legacy-firepot' } })
+    const ambiguousSnack = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { restaurantCategory: '小吃 / 面点' } }, {}, false)).json()
+    expect(ambiguousSnack).toMatchObject({ status: 'empty' })
+    const snackOld = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { restaurantCategory: '小吃 / 轻食' } }, {}, false)).json()
+    expect(snackOld).toMatchObject({ status: 'ok', restaurant: { id: 'legacy-snack' } })
+
+    const firepotListNew = await (await call(`/api/restaurants?category=${encodeURIComponent('火锅 / 麻辣烫')}`, 'GET', undefined, {}, false)).json() as Restaurant[]
+    expect(firepotListNew.map((restaurant) => restaurant.id)).toEqual(['legacy-firepot'])
+    const firepotListOld = await (await call(`/api/restaurants?category=${encodeURIComponent('火锅 / 串串')}`, 'GET', undefined, {}, false)).json() as Restaurant[]
+    expect(firepotListOld.map((restaurant) => restaurant.id)).toEqual(['legacy-firepot'])
+    const snackListNew = await (await call(`/api/restaurants?category=${encodeURIComponent('小吃 / 面点')}`, 'GET', undefined, {}, false)).json() as Restaurant[]
+    expect(snackListNew).toEqual([])
+    const snackListOld = await (await call(`/api/restaurants?category=${encodeURIComponent('小吃 / 轻食')}`, 'GET', undefined, {}, false)).json() as Restaurant[]
+    expect(snackListOld.map((restaurant) => restaurant.id)).toEqual(['legacy-snack'])
 
     const other = await (await call('/api/recommend', 'POST', { mode: 'combo', filters: { restaurantCategory: DEFAULT_RESTAURANT_CATEGORY } }, {}, false)).json()
     expect(other).toMatchObject({ status: 'ok', restaurant: { id: 'legacy-empty-category' } })

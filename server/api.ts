@@ -1,10 +1,11 @@
 import type { Area, Dish, Menu, Resource, Restaurant } from '../shared/types'
 import { recommend } from '../shared/recommendation'
+import { canonicalDishCategory, normalizeRestaurantCategory } from '../shared/categories'
 import { authenticate, requireCsrf, requireSameOrigin } from './auth'
 import type { Env } from './env'
 import { HttpError, json } from './http'
 import { handleAdminSession } from './session'
-import { readJson, readOptionalJson, validateId, validateMutation, validateRecommend, validateRestaurantCategoryMutation } from './validation'
+import { readJson, readOptionalJson, validateDishCategoryMutation, validateId, validateMutation, validateRecommend, validateRestaurantCategoryMutation } from './validation'
 
 type Entity = Area | Restaurant | Dish
 type Row = Record<string, string | number>
@@ -32,6 +33,7 @@ async function list(env: Env, resource: Resource, admin: boolean, url?: URL): Pr
   const conditions: string[] = []
   const parameters: string[] = []
   let joins = ''
+  const legacyCategory = url?.searchParams.get('category')?.trim()
   if (resource === 'restaurants') joins = ' JOIN areas a ON a.id = t.area_id'
   if (resource === 'dishes') joins = ' JOIN restaurants r ON r.id = t.restaurant_id JOIN areas a ON a.id = r.area_id'
   if (!admin) {
@@ -43,15 +45,22 @@ async function list(env: Env, resource: Resource, admin: boolean, url?: URL): Pr
     const value = url?.searchParams.get(key)
     if (value !== undefined && value !== null) {
       conditions.push(`${column} = ?`)
-      parameters.push(key === 'category' ? value.trim() : validateId(value))
+      parameters.push(validateId(value))
     }
   }
   filter('areaId', resource === 'areas' ? 't.id' : resource === 'restaurants' ? 't.area_id' : 'r.area_id')
   if (resource !== 'areas') filter('restaurantId', resource === 'restaurants' ? 't.id' : 't.restaurant_id')
-  if (resource !== 'areas') filter('category', 't.category')
   const order = resource === 'areas' ? 't.sort_order, t.name, t.id' : 't.name, t.id'
   const result = await env.DB.prepare(`SELECT t.* FROM ${resource} t${joins}${conditions.length ? ` WHERE ${conditions.join(' AND ')}` : ''} ORDER BY ${order}`).bind(...parameters).all<Row>()
-  return result.results.map((row) => entity(resource, row))
+  const entities = result.results.map((row) => entity(resource, row))
+  if (legacyCategory === undefined || legacyCategory === null || resource === 'areas') return entities
+  if (legacyCategory === '') return entities.filter((item) => (item as Restaurant | Dish).category === '')
+  if (resource === 'dishes') {
+    const category = canonicalDishCategory(legacyCategory)
+    return entities.filter((item) => canonicalDishCategory((item as Dish).category) === category)
+  }
+  const category = normalizeRestaurantCategory(legacyCategory)
+  return entities.filter((item) => normalizeRestaurantCategory((item as Restaurant).category) === category)
 }
 
 async function requireParent(env: Env, resource: Resource, values: Record<string, unknown>): Promise<void> {
@@ -126,6 +135,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     const values = validateMutation(resource, await readJson(request), partial)
     const existing = id ? await get(env, resource, id) : null
     if (resource === 'restaurants') validateRestaurantCategoryMutation(values, existing ? (existing as Restaurant).category : undefined)
+    else if (resource === 'dishes') validateDishCategoryMutation(values, existing ? (existing as Dish).category : undefined)
     await requireParent(env, resource, values)
     const keys = Object.keys(values)
     const now = new Date().toISOString()

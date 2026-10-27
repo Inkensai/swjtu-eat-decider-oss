@@ -200,8 +200,11 @@ describe('真实 Pages advanced-mode 构建产物', () => {
       method: 'POST', body: { areaId: seedArea, name: '默认分类店' },
     })).json() as Restaurant
     expect(defaulted.category).toBe(DEFAULT_RESTAURANT_CATEGORY)
-    await adminCall('/api/admin/dishes', { method: 'POST', body: { restaurantId: noodle.id, name: '粉面店菜品', priceCents: 1000 } })
-    await adminCall('/api/admin/dishes', { method: 'POST', body: { restaurantId: rice.id, name: '盖饭店菜品', priceCents: 1100 } })
+    expect((await adminCall('/api/admin/dishes', {
+      method: 'POST', body: { restaurantId: noodle.id, name: '非法菜品分类', category: '粉面', priceCents: 1000 },
+    })).status).toBe(400)
+    await adminCall('/api/admin/dishes', { method: 'POST', body: { restaurantId: noodle.id, name: '粉面店菜品', category: '粉面 / 米线', priceCents: 1000 } })
+    await adminCall('/api/admin/dishes', { method: 'POST', body: { restaurantId: rice.id, name: '盖饭店菜品', category: '米饭 / 套餐', priceCents: 1100 } })
 
     const filtered = await call('/api/recommend', {
       method: 'POST', body: { mode: 'combo', filters: { restaurantCategory: '快餐 / 盖饭' } },
