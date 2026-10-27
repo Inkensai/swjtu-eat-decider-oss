@@ -4,7 +4,7 @@ import { authenticate, requireCsrf, requireSameOrigin } from './auth'
 import type { Env } from './env'
 import { HttpError, json } from './http'
 import { handleAdminSession } from './session'
-import { readJson, readOptionalJson, validateId, validateMutation, validateRecommend } from './validation'
+import { readJson, readOptionalJson, validateId, validateMutation, validateRecommend, validateRestaurantCategoryMutation } from './validation'
 
 type Entity = Area | Restaurant | Dish
 type Row = Record<string, string | number>
@@ -124,7 +124,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if ((request.method === 'POST' && !id) || (request.method === 'PATCH' && id)) {
     const partial = request.method === 'PATCH'
     const values = validateMutation(resource, await readJson(request), partial)
-    if (id) await get(env, resource, id)
+    const existing = id ? await get(env, resource, id) : null
+    if (resource === 'restaurants') validateRestaurantCategoryMutation(values, existing ? (existing as Restaurant).category : undefined)
     await requireParent(env, resource, values)
     const keys = Object.keys(values)
     const now = new Date().toISOString()

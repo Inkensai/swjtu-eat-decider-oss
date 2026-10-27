@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Mode, RecommendRequest, RecommendResult } from '../../shared/types'
+import { RESTAURANT_CATEGORIES, normalizeRestaurantCategory, type RestaurantCategory } from '../../shared/categories'
 import { api } from '../services/api'
 import { useMenuStore } from '../stores/menu'
 import { useHistoryStore } from '../stores/history'
@@ -11,6 +12,7 @@ const history = useHistoryStore()
 const mode = ref<Mode>('combo')
 const areaId = ref('')
 const restaurantId = ref('')
+const restaurantCategory = ref<RestaurantCategory | ''>('')
 const category = ref('')
 const maxPrice = ref('')
 const excludedRestaurantIds = ref<string[]>([])
@@ -22,14 +24,24 @@ const result = ref<RecommendResult | null>(null)
 const resultHistoryId = ref('')
 const activeAreas = computed(() => menu.areas.filter((area) => area.enabled))
 const activeRestaurants = computed(() => menu.restaurants.filter((restaurant) => restaurant.enabled && activeAreas.value.some((area) => area.id === restaurant.areaId)))
-const restaurants = computed(() => activeRestaurants.value.filter((restaurant) => !areaId.value || restaurant.areaId === areaId.value))
+const restaurants = computed(() => activeRestaurants.value.filter((restaurant) => (!areaId.value || restaurant.areaId === areaId.value)
+  && (mode.value === 'dish' || !restaurantCategory.value || normalizeRestaurantCategory(restaurant.category) === restaurantCategory.value)))
 const dishes = computed(() => menu.dishes.filter((dish) => dish.enabled && restaurants.value.some((restaurant) => restaurant.id === dish.restaurantId) && (!restaurantId.value || dish.restaurantId === restaurantId.value)))
 const categories = computed(() => [...new Set(dishes.value.map((dish) => dish.category).filter(Boolean))].sort())
 const selectedEntry = computed(() => history.entries.find((entry) => entry.id === resultHistoryId.value))
 const areaName = computed(() => { const current = result.value; return current?.status === 'ok' ? menu.areas.find((area) => area.id === current.restaurant.areaId)?.name : '' })
 const selectedFilterCount = computed(() => Number(Boolean(category.value)) + Number(Boolean(maxPrice.value)) + excludedRestaurantIds.value.length + excludedDishIds.value.length)
-watch(areaId, () => { if (!restaurants.value.some((item) => item.id === restaurantId.value)) restaurantId.value = '' })
-watch(categories, () => { if (!categories.value.includes(category.value)) category.value = '' })
+watch(restaurants, () => {
+  const visible = new Set(restaurants.value.map((restaurant) => restaurant.id))
+  if (!visible.has(restaurantId.value)) restaurantId.value = ''
+  excludedRestaurantIds.value = excludedRestaurantIds.value.filter((id) => visible.has(id))
+})
+watch(dishes, () => {
+  const visible = new Set(dishes.value.map((dish) => dish.id))
+  excludedDishIds.value = excludedDishIds.value.filter((id) => visible.has(id))
+  if (!categories.value.includes(category.value)) category.value = ''
+})
+watch(mode, (value) => { if (value === 'dish') restaurantCategory.value = '' })
 onMounted(() => { void menu.load() })
 
 async function decide() {
@@ -43,6 +55,7 @@ async function decide() {
     filters: {
       ...(areaId.value ? { areaId: areaId.value } : {}),
       ...(restaurantId.value ? { restaurantId: restaurantId.value } : {}),
+      ...(mode.value !== 'dish' && restaurantCategory.value ? { restaurantCategory: restaurantCategory.value } : {}),
       ...(category.value ? { category: category.value } : {}),
       ...(maxPriceCents !== undefined ? { maxPriceCents } : {}),
       excludedRestaurantIds: excludedRestaurantIds.value,
@@ -80,6 +93,7 @@ function resetFilters() { category.value = ''; maxPrice.value = ''; excludedRest
           <button v-for="item in (['combo', 'restaurant', 'dish'] as Mode[])" :key="item" type="button" :class="{ selected: mode === item }" :aria-pressed="mode === item" @click="mode = item"><span class="mode-icon" aria-hidden="true">{{ item === 'combo' ? '✦' : item === 'restaurant' ? '⌂' : '≋' }}</span>{{ modeLabels[item] }}</button>
         </div>
         <div class="field-grid main-fields">
+          <label v-if="mode !== 'dish'" class="type-filter-field">今天想吃什么类型？<select v-model="restaurantCategory"><option value="">不限类型</option><option v-for="item in RESTAURANT_CATEGORIES" :key="item" :value="item">{{ item }}</option></select></label>
           <label>想去哪里<select v-model="areaId"><option value="">全部区域</option><option v-for="area in activeAreas" :key="area.id" :value="area.id">{{ area.name }}</option></select></label>
           <label>{{ mode === 'dish' ? '选择店铺（必选）' : '想吃哪家（可选）' }}<select v-model="restaurantId"><option value="">{{ mode === 'dish' ? '请选择一家店铺' : '都可以，让我来选' }}</option><option v-for="restaurant in restaurants" :key="restaurant.id" :value="restaurant.id">{{ restaurant.name }}</option></select></label>
         </div>

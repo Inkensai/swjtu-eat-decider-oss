@@ -11,6 +11,9 @@
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 .home-shell .home-bottom{display:none}
+.type-filter-field{grid-column:1 / -1}
+.editor-panel .form-advanced{margin:20px 0 8px;padding-bottom:8px}
+.form-advanced .form-enabled{margin-top:18px}
 @media(min-width:900px){
   .home-shell .site-header{padding:16px 0}
   .home-shell .home-intro{padding:24px 0 22px}

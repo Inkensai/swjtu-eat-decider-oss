@@ -19,6 +19,7 @@
   "mode": "combo",
   "filters": {
     "areaId": "区域ID",
+    "restaurantCategory": "粉面 / 面食",
     "maxPriceCents": 2000,
     "excludedRestaurantIds": [],
     "excludedDishIds": []
@@ -28,7 +29,9 @@
 }
 ```
 
-mode为restaurant/dish/combo。filters还支持restaurantId、category；未使用的筛选字段应省略，不能传空字符串。dish模式必须指定restaurantId。recentDishIds至多5项，按旧到新；排除列表各至多200项。所有价格、权重与启用状态以数据库为准，客户端不能传入候选菜单或权重。
+mode为restaurant/dish/combo。filters还支持restaurantId、restaurantCategory、category；未使用的筛选字段应省略，不能传空字符串。dish模式必须指定restaurantId。recentDishIds至多5项，按旧到新；排除列表各至多200项。所有价格、权重与启用状态以数据库为准，客户端不能传入候选菜单或权重。
+
+`restaurantCategory`只筛选店铺分类，必须是`炒菜 / 家常菜`、`粉面 / 面食`、`快餐 / 盖饭`、`火锅 / 串串`、`烧烤 / 烤肉`、`小吃 / 轻食`、`饮品 / 甜品`、`其他 / 综合`之一；其他值返回400。省略时保持 V1.0 的不限分类行为。历史空店铺分类按`其他 / 综合`参与；不属于标准列表的历史自定义分类只在省略该参数时参与。`category`仍只筛选菜品分类，两者互不替代。dish模式已明确指定店铺，服务端忽略`restaurantCategory`。
 
 成功返回 `{status:"ok",restaurant,dish,candidateDishCount}`。restaurant模式dish为null。空候选是HTTP200 `{status:"empty",message}`，不是服务异常。
 
@@ -60,7 +63,7 @@ mode为restaurant/dish/combo。filters还支持restaurantId、category；未使�
 | restaurants | areaId、name、category、location、enabled |
 | dishes | restaurantId、name、category、priceCents、weight、notes、enabled |
 
-type默认为other（canteen/nearby/other），sortOrder默认为0，enabled默认为true，category/location/notes默认为空字符串，weight默认为1。PATCH仅改提交字段，空PATCH和未知字段拒绝；id和时间由服务端生成。
+type默认为other（canteen/nearby/other），sortOrder默认为0，enabled默认为true，location/notes默认为空字符串，weight默认为1；店铺创建时省略category则默认为`其他 / 综合`，菜品创建时省略category则默认为空。PATCH仅改提交字段，空PATCH和未知字段拒绝；id和时间由服务端生成。店铺与菜品的历史自定义分类继续按≤60字符文本保存，避免编辑其他字段时丢失。
 
 名称1–100字符，分类≤60，位置≤300，备注≤500；价格为0–100000000整数分，权重为0–1000000有限数，排序为0–1000000整数；请求体上限65536字节。
 
