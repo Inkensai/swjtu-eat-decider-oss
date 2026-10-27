@@ -6,7 +6,7 @@
 
 > 本仓库是脱敏的开源源码副本。正式在线网站由独立的 Private 生产仓库和 Cloudflare Pages 部署；本仓库不会自动驱动线上部署。
 
-公开源码仓库（候选名称，尚未创建远程仓库）：<https://github.com/Inkensai/swjtu-eat-decider-oss>
+公开源码仓库：<https://github.com/Inkensai/swjtu-eat-decider-oss>
 
 ## 功能
 
