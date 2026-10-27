@@ -10,28 +10,35 @@
 @media(max-width:620px){.app-shell{padding:0 20px}.site-header{align-items:flex-start;flex-direction:column;gap:18px;padding:20px 0 14px}.brand{font-size:19px}.brand small{font-size:9px;letter-spacing:1.1px}.brand-mark{width:39px;height:39px}.site-header nav{width:100%;gap:5px;justify-content:space-between}.site-header nav a{min-height:40px;text-align:center;flex:1;padding:9px 5px;font-size:12px}.intro{padding:30px 0 22px}.intro h1{font-size:34px;letter-spacing:-1px;margin:9px 0 10px}.intro p{font-size:12px;line-height:1.9}.eyebrow{font-size:10px;letter-spacing:1.5px}.decision-layout{display:flex;flex-direction:column;gap:20px}.decision-panel{padding:23px}.decision-panel .section-top{flex-wrap:nowrap;margin-bottom:19px}.section-top h2{font-size:15px}.mode-tabs button{font-size:12px;padding:11px 3px;min-height:61px}.main-fields{margin-top:22px;gap:14px}.result-panel{min-height:365px;padding:27px 23px}.food-art{transform:rotate(-9deg) scale(.9);margin-top:0;margin-bottom:0}.empty-art{transform:rotate(-12deg) scale(1);margin-top:0;margin-bottom:13px}.result-panel h2{font-size:26px}.result-panel .small-spark{right:25px;bottom:20px}.result-eyebrow{font-size:10px}.home-bottom{gap:19px;margin-top:25px;font-size:10px}.home-bottom b{font-size:15px;margin-right:4px}.site-footer{margin-top:36px;font-size:9px;padding:21px 0}.history-panel{padding:21px 17px}.history-list li{gap:10px;padding:19px 0;flex-wrap:wrap}.history-food-icon{width:35px;height:35px;font-size:21px;border-radius:10px}.history-content{flex-basis:calc(100% - 45px)}.history-content h3{font-size:14px}.history-meta{font-size:9px;gap:9px}.history-content p{font-size:10px}.adopt-button{margin-left:45px;min-height:32px;font-size:10px}.empty-state{padding:35px 12px}.empty-state h3{font-size:16px}.admin-login{padding:18px}.login-row{flex-direction:column;gap:10px}.admin-login>label{font-size:13px}.toolbar-actions{gap:10px}.admin-toolbar{font-size:10px;gap:5px}.admin-toolbar p{flex:1 1 100%}.toolbar-actions{width:100%;justify-content:space-between}.admin-toolbar p>span{padding:0 3px}.admin-columns{display:flex;flex-direction:column;gap:15px}.manage-column{width:100%;min-height:0;padding:19px}.manage-column .section-top{margin-bottom:11px}.manage-list{max-height:370px;overflow:auto;overflow-x:hidden}.manage-list>li{margin-left:0;margin-right:0}.item-select{font-size:14px}.item-select small,.dish-summary small{font-size:11px}.item-actions{gap:23px}.item-actions button{font-size:11px;min-height:35px}.dish-summary{font-size:14px}.dish-summary>strong{font-size:12px}.column-empty{padding:15px 0;font-size:11px}.editor-panel{padding:21px 18px}.editor-panel .field-grid{grid-template-columns:1fr;gap:17px}.button-row{flex-wrap:wrap}.notice{font-size:11px}.advanced-filters summary span{font-size:10px}.recent-switch{margin-bottom:22px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
-.home-shell .home-bottom{display:none}
+.home-shell .home-bottom{margin:12px 0 0}
 .type-filter-field{grid-column:1 / -1}
 .editor-panel .form-advanced{margin:20px 0 8px;padding-bottom:8px}
 .form-advanced .form-enabled{margin-top:18px}
 @media(min-width:900px){
+  .app-shell{max-width:1360px}
+  .home-shell main{display:flex;flex-direction:column}
+  .home-shell .decision-layout{flex:1}
   .home-shell .decision-panel{padding:24px}
   .home-shell .decision-panel .section-top{margin-bottom:16px}
-  .home-shell .main-fields{margin:20px 0 16px}
+  .home-shell .mode-tabs button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:9px 3px}
+  .home-shell .mode-icon{font-size:20px;margin:0}
+  .home-shell .main-fields{grid-template-columns:repeat(3,minmax(0,1fr));margin:20px 0 16px;gap:14px}
+  .home-shell .type-filter-field{grid-column:auto}
+  .home-shell .main-fields:not(:has(.type-filter-field)){grid-template-columns:repeat(2,minmax(0,1fr))}
   .home-shell .advanced-filters{padding-bottom:10px;margin-bottom:14px}
   .home-shell .recent-switch{margin-bottom:18px}
   .home-shell .privacy-note{margin-top:12px}
   .home-shell .result-panel{min-height:0;padding:24px}
   .home-shell .result-panel .food-art{height:120px;margin:0 auto 12px;transform:rotate(-9deg) scale(.8);transform-origin:top center}
   .home-shell .result-actions{margin-top:18px}
-  .home-shell .site-footer{margin-top:18px;padding:14px 0}
+  .home-shell .site-footer{margin-top:10px;padding:12px 0}
 }
-@media(min-width:900px) and (max-height:820px){
+@media(min-width:900px) and (max-height:800px){
+  .site-header{padding:16px 0}
+  .intro{padding:12px 0}
   .home-shell .decision-panel{padding:20px}
   .home-shell .decision-panel .section-top{margin-bottom:12px}
-  .home-shell .mode-tabs button{display:flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:9px 3px}
-  .home-shell .mode-icon{font-size:20px;margin:0}
-  .home-shell .main-fields{margin:16px 0 14px}
+  .home-shell .main-fields{margin:12px 0 10px;gap:10px}
   .home-shell .advanced-filters{padding-bottom:8px;margin-bottom:12px}
   .home-shell .recent-switch{margin-bottom:14px}
   .home-shell .decide-button{min-height:48px;padding:12px 18px}
@@ -39,5 +46,5 @@
   .home-shell .result-panel{padding:20px}
   .home-shell .result-price{margin-top:10px}
   .home-shell .result-actions{margin-top:14px}
-  .home-shell .site-footer{margin-top:14px;padding:12px 0}
+  .home-shell .site-footer{margin-top:6px;padding:12px 0}
 }
