@@ -145,6 +145,14 @@ export function validateMutation(resource: Resource, value: unknown, partial: bo
   return result
 }
 
+export function validateRestaurantCategoryMutation(values: Record<string, unknown>, currentCategory?: string): void {
+  if (!Object.hasOwn(values, 'category')) return
+  const category = values.category
+  if (typeof category !== 'string') invalid('店铺分类必须是文本')
+  if (currentCategory !== undefined && category === currentCategory) return
+  if (!isRestaurantCategory(category)) invalid('店铺分类必须是标准分类；历史分类只能在未修改时保留')
+}
+
 export function validateRecommend(value: unknown): RecommendRequest {
   const input = object(value, ['mode', 'filters', 'avoidRecent', 'recentDishIds'])
   const mode = input.mode

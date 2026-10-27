@@ -179,6 +179,17 @@ describe('真实 Pages advanced-mode 构建产物', () => {
 
   it('真实 Pages 入口按店铺分类筛选推荐，并默认归入其他分类', async () => {
     await loginAsAdmin()
+    expect((await adminCall('/api/admin/restaurants', {
+      method: 'POST', body: { areaId: seedArea, name: '非法分类店', category: '川菜' },
+    })).status).toBe(400)
+    const blankSame = await adminCall(`/api/admin/restaurants/${seedRestaurant}`, { method: 'PATCH', body: { category: '' } })
+    expect(blankSame.status).toBe(200)
+    expect(await blankSame.json()).toMatchObject({ id: seedRestaurant, category: '' })
+    expect((await adminCall(`/api/admin/restaurants/${seedRestaurant}`, { method: 'PATCH', body: { category: '川菜' } })).status).toBe(400)
+    const renamed = await adminCall(`/api/admin/restaurants/${seedRestaurant}`, { method: 'PATCH', body: { name: '测试窗口改名' } })
+    expect(renamed.status).toBe(200)
+    expect(await renamed.json()).toMatchObject({ id: seedRestaurant, name: '测试窗口改名', category: '' })
+
     const noodle = await (await adminCall('/api/admin/restaurants', {
       method: 'POST', body: { areaId: seedArea, name: '粉面分类店', category: '粉面 / 面食' },
     })).json() as Restaurant
