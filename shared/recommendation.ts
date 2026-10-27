@@ -1,4 +1,5 @@
 import type { Dish, Menu, RecommendRequest, RecommendResult } from './types'
+import { normalizeRestaurantCategory } from './categories'
 
 function randomValue(rng: () => number): number {
   const value = rng()
@@ -47,9 +48,12 @@ export function recommend(
     .map(area => area.id))
   const excludedRestaurants = new Set(filters.excludedRestaurantIds ?? [])
   const excludedDishes = new Set(filters.excludedDishIds ?? [])
+  // 店内选菜已明确指定店铺，不再让店铺分类额外收窄候选。
+  const restaurantCategory = request.mode === 'dish' ? undefined : filters.restaurantCategory
   const restaurants = menu.restaurants.filter(restaurant => restaurant.enabled
     && areaIds.has(restaurant.areaId)
     && (!filters.restaurantId || restaurant.id === filters.restaurantId)
+    && (!restaurantCategory || normalizeRestaurantCategory(restaurant.category) === restaurantCategory)
     && !excludedRestaurants.has(restaurant.id))
   const dishesByRestaurant = new Map(restaurants.map(restaurant => [restaurant.id, [] as Dish[]]))
 
@@ -65,7 +69,12 @@ export function recommend(
 
   const candidates = restaurants.filter(restaurant => dishesByRestaurant.get(restaurant.id)!.length > 0)
   if (candidates.length === 0) {
-    return { status: 'empty', message: '没有符合条件的菜品，请放宽筛选条件' }
+    return {
+      status: 'empty',
+      message: restaurantCategory
+        ? `没有符合「${restaurantCategory}」分类和当前条件的店铺或菜品，请放宽筛选条件`
+        : '没有符合条件的菜品，请放宽筛选条件',
+    }
   }
 
   const restaurant = request.mode === 'dish'

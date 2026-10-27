@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { recommend } from '../shared/recommendation'
+import { DEFAULT_RESTAURANT_CATEGORY } from '../shared/categories'
 import type { Area, Dish, Filters, Menu, Mode, RecommendRequest, Restaurant } from '../shared/types'
 
 const timestamps = { createdAt: '2026-10-26T00:00:00Z', updatedAt: '2026-10-26T00:00:00Z' }
@@ -89,6 +90,69 @@ describe('recommendation candidates and modes', () => {
     const data = menu([dish(), dish('d2', 'r2', { priceCents: 1200 })], [restaurant(), restaurant('r2')])
     expect(selectedDish(data, request('combo', { restaurantId: 'r2', maxPriceCents: 1200 }), 0)).toBe('d2')
     expect(recommend(data, request('combo', { restaurantId: 'r2', maxPriceCents: 1199 })).status).toBe('empty')
+  })
+})
+
+describe('restaurant category filtering', () => {
+  const categorized = menu([
+    dish('noodle-dish', 'noodle'),
+    dish('rice-dish', 'rice'),
+    dish('legacy-dish', 'legacy'),
+    dish('other-dish', 'other'),
+    dish('custom-dish', 'custom'),
+    dish('far-dish', 'far'),
+  ], [
+    restaurant('noodle', { category: '粉面 / 面食' }),
+    restaurant('rice', { category: '快餐 / 盖饭' }),
+    restaurant('legacy', { category: '' }),
+    restaurant('other', { category: DEFAULT_RESTAURANT_CATEGORY }),
+    restaurant('custom', { category: '川菜' }),
+    restaurant('far', { areaId: 'a2', category: '粉面 / 面食' }),
+  ], [area(), area('a2')])
+
+  it('only draws from the selected restaurant category', () => {
+    expect(selectedDish(categorized, request('combo', { restaurantCategory: '粉面 / 面食' }), 0)).toBe('noodle-dish')
+    expect(selectedDish(categorized, request('combo', { restaurantCategory: '快餐 / 盖饭' }), 0.99)).toBe('rice-dish')
+  })
+
+  it('combines area and restaurant category filters', () => {
+    expect(selectedDish(categorized, request('combo', { areaId: 'a2', restaurantCategory: '粉面 / 面食' }), 0.99)).toBe('far-dish')
+  })
+
+  it('treats legacy blank categories as the default category without rewriting data', () => {
+    const data = menu([dish('legacy-dish', 'legacy'), dish('other-dish', 'other')], [
+      restaurant('legacy', { category: '' }),
+      restaurant('other', { category: DEFAULT_RESTAURANT_CATEGORY }),
+    ])
+    expect(selectedDish(data, request('combo', { restaurantCategory: DEFAULT_RESTAURANT_CATEGORY }), 0)).toBe('legacy-dish')
+    expect(selectedDish(data, request('combo', { restaurantCategory: DEFAULT_RESTAURANT_CATEGORY }), 0.99)).toBe('other-dish')
+  })
+
+  it('keeps custom historical categories only in the unlimited filter', () => {
+    const data = menu([dish('custom-dish', 'custom')], [restaurant('custom', { category: '川菜' })])
+    expect(selectedDish(data, request('combo', {}), 0)).toBe('custom-dish')
+    expect(recommend(data, request('combo', { restaurantCategory: '其他 / 综合' }))).toMatchObject({ status: 'empty' })
+  })
+
+  it('does not apply a restaurant category to an explicitly selected dish-mode store', () => {
+    const data = menu([dish('d1')], [restaurant('r1', { category: '炒菜 / 家常菜' })])
+    expect(recommend(data, request('dish', { restaurantId: 'r1', restaurantCategory: '粉面 / 面食' }), () => 0.1))
+      .toMatchObject({ status: 'ok', restaurant: { id: 'r1' }, dish: { id: 'd1' } })
+  })
+
+  it('keeps dish category independent from restaurant category', () => {
+    const data = menu([dish('d1', 'r1', { category: '米饭 / 盖饭' })], [restaurant('r1', { category: '粉面 / 面食' })])
+    expect(recommend(data, request('combo', {
+      restaurantId: 'r1', restaurantCategory: '粉面 / 面食', category: '米饭 / 盖饭',
+    }), () => 0)).toMatchObject({ status: 'ok', restaurant: { id: 'r1' }, dish: { id: 'd1' } })
+  })
+
+  it('returns a category-specific empty message', () => {
+    const data = menu([dish('d1')], [restaurant('r1', { category: '快餐 / 盖饭' })])
+    expect(recommend(data, request('combo', { restaurantCategory: '火锅 / 串串' }))).toEqual({
+      status: 'empty',
+      message: '没有符合「火锅 / 串串」分类和当前条件的店铺或菜品，请放宽筛选条件',
+    })
   })
 })
 

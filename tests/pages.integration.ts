@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { convertV4MiniflareOptions, Miniflare } from 'miniflare'
 import { SESSION_COOKIE } from '../server/auth'
 import type { Area, Dish, Restaurant } from '../shared/types'
+import { DEFAULT_RESTAURANT_CATEGORY } from '../shared/categories'
 import { TEST_ADMIN_KEY, accessKeyHash, findCookie, setCookies } from './support'
 
 const origin = 'https://pages-test.example'
@@ -174,6 +175,30 @@ describe('真实 Pages advanced-mode 构建产物', () => {
       expect(response.headers.get('Content-Type')).toContain('application/json')
       expect(await response.json()).toMatchObject({ error: { code: 'NOT_FOUND' } })
     }
+  })
+
+  it('真实 Pages 入口按店铺分类筛选推荐，并默认归入其他分类', async () => {
+    await loginAsAdmin()
+    const noodle = await (await adminCall('/api/admin/restaurants', {
+      method: 'POST', body: { areaId: seedArea, name: '粉面分类店', category: '粉面 / 面食' },
+    })).json() as Restaurant
+    const rice = await (await adminCall('/api/admin/restaurants', {
+      method: 'POST', body: { areaId: seedArea, name: '盖饭分类店', category: '快餐 / 盖饭' },
+    })).json() as Restaurant
+    const defaulted = await (await adminCall('/api/admin/restaurants', {
+      method: 'POST', body: { areaId: seedArea, name: '默认分类店' },
+    })).json() as Restaurant
+    expect(defaulted.category).toBe(DEFAULT_RESTAURANT_CATEGORY)
+    await adminCall('/api/admin/dishes', { method: 'POST', body: { restaurantId: noodle.id, name: '粉面店菜品', priceCents: 1000 } })
+    await adminCall('/api/admin/dishes', { method: 'POST', body: { restaurantId: rice.id, name: '盖饭店菜品', priceCents: 1100 } })
+
+    const filtered = await call('/api/recommend', {
+      method: 'POST', body: { mode: 'combo', filters: { restaurantCategory: '快餐 / 盖饭' } },
+    })
+    expect(await filtered.json()).toMatchObject({ status: 'ok', restaurant: { id: rice.id } })
+    expect((await call('/api/recommend', {
+      method: 'POST', body: { mode: 'combo', filters: { restaurantCategory: '不存在的分类' } },
+    })).status).toBe(400)
   })
 
   it('未登录时默认拒绝全部管理 API，管理页面本身公开', async () => {
