@@ -1,0 +1,18 @@
+# 运行 npm run setup:local 生成随机本地管理员访问密钥。
+# 密钥写入被 Git 忽略的 .dev.vars.admin-key；SHA-256 摘要写入 .dev.vars。
+# 生产环境二选一，优先推荐 Free 兼容的访问密钥：
+#   1) npm run admin:key 生成 ADMIN_ACCESS_KEY 与 ADMIN_ACCESS_KEY_HASH；
+#      仅把 ADMIN_ACCESS_KEY_HASH（sha256:<64位十六进制>）配置为 Pages 加密变量。
+#   2) npm run admin:hash 生成 ADMIN_PASSWORD_HASH（PBKDF2，高 CPU，需付费套餐或实测余量）。
+# 管理员凭据或摘要绝不能写入源码、前端变量（VITE_*）、Git、URL 或日志。
+
+# Free 套餐推荐：高熵访问密钥摘要（设置后优先于 ADMIN_PASSWORD_HASH）。
+ADMIN_ACCESS_KEY_HASH=
+
+# 备选：人工密码 PBKDF2 哈希（默认 100000 次迭代，CPU 开销较高）。
+# ADMIN_PASSWORD_HASH=
+
+# 可选的服务端会话与登录限流配置（默认值如下）。
+# ADMIN_SESSION_TTL_SECONDS=43200
+# ADMIN_LOGIN_MAX_ATTEMPTS=5
+# ADMIN_LOGIN_WINDOW_SECONDS=900
