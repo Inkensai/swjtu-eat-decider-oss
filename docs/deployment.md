@@ -61,8 +61,10 @@ npx wrangler d1 migrations apply <D1_NAME> --remote --env production --config wr
 - `0001_menu.sql`：`areas`、`restaurants`、`dishes` 及三个索引；
 - `0002_admin_auth.sql`：`admin_sessions`、`admin_login_attempts` 及两个索引；
 - `0003_ratings.sql`：`ratings`、`rating_rate_limits`、两个部分唯一索引、两个普通索引与一个窗口索引，以及级联外键和 CHECK 约束。
+- `0004_rating_indexes.sql`：个人评分查询、管理员游标分页及筛选索引。
+- `0005_availability.sql`：店铺每日营业时段、今日休息日期和菜品售罄日期，旧数据默认空字符串。
 
-必须通过 Wrangler 的迁移登记表执行，不要手工重复执行整份 `CREATE` SQL。不要将迁移放进 Pages 构建命令；构建阶段不应写生产库。从 V1.1.2 升级时只有 `0003_ratings.sql` 会执行，已有菜单数据不会被改写。
+必须通过 Wrangler 的迁移登记表执行，不要手工重复执行整份 SQL。不要将迁移放进 Pages 构建命令；构建阶段不应写生产库。从 V1.2 升级时先备份数据库，再应用 `0004`、`0005`，确认成功后发布新 Worker。新增字段不改变已有菜单名称/价格。自行部署可使用自己的数据库名，产物测试只要求有效 DB 绑定及配置结构。
 
 迁移后核验：
 
@@ -218,7 +220,7 @@ npx wrangler pages deployment tail --project-name <PAGES_PROJECT> --environment 
 - 首次提交评分时下发 `ed_rater_id` Cookie：生产为 `Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000`。只有本地回环 HTTP 开发省略 `Secure`；不要为了让明文 HTTP 可用而关闭它。
 - 同一匿名身份对同一对象只有一条有效评分；再次提交更新原记录，评分人数不变。删除权限只有原 Cookie 身份或认证管理员；管理员删除同时要求 `Origin` 与 `X-CSRF-Token`。
 - 限流按匿名身份摘要与来源 IP 摘要分别计数，使用上表的三个普通变量。来源 IP 只信任 `CF-Connecting-IP`（Cloudflare 边缘写入），不要改为信任 `X-Real-IP` 等客户端可伪造的头。
-- 评分接口失败时不会写入数据；响应始终 `Cache-Control: no-store`，避免把某个身份的个人评分状态缓存给其他访客。
+- 个人评分与完整评分接口始终 `Cache-Control: no-store`；仅 `/api/ratings/summary` 公共汇总可缓存30秒，永远不包含个人评分或 Set-Cookie。评分写入成功后的客户端刷新绕过缓存。
 
 上线后只读核验：
 

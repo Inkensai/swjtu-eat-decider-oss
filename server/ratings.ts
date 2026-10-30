@@ -23,7 +23,8 @@ const DEFAULT_WRITE_LIMIT = 30
 const DEFAULT_IP_LIMIT = 120
 const DEFAULT_WINDOW_SECONDS = 600
 const RATE_LIMIT_RETENTION_MS = 86_400_000
-const ADMIN_LIST_LIMIT = 500
+const DEFAULT_ADMIN_LIST_LIMIT = 50
+const MAX_ADMIN_LIST_LIMIT = 100
 
 interface Identity { token: string; hash: string }
 
@@ -65,13 +66,20 @@ async function summaryOf(env: Env, targetType: RatingTargetType, targetId: strin
   return { targetId, average: averageOf(row?.average ?? null), count: row?.count ?? 0 }
 }
 
-/** 全站统计只覆盖当前公开可见的对象；停用对象的历史评分不进入公开结果。 */
-export async function handleRatingsOverview(request: Request, env: Env): Promise<Response> {
+function requireRatingRead(request: Request): void {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     throw new HttpError(405, 'METHOD_NOT_ALLOWED', '不支持该评分操作', undefined, { Allow: 'GET, HEAD' })
   }
-  const identity = await readIdentity(request)
-  const [restaurants, dishes, mine] = await Promise.all([
+}
+
+function ratingReadResponse(request: Request, value: unknown, cacheControl: string): Response {
+  const response = json(value, 200, { 'Cache-Control': cacheControl })
+  return request.method === 'HEAD' ? new Response(null, { status: response.status, headers: response.headers }) : response
+}
+
+/** 全站统计只覆盖当前公开可见的对象；停用对象的历史评分不进入公开结果。 */
+async function readRatingSummaries(env: Env): Promise<Pick<RatingOverview, 'restaurants' | 'dishes'>> {
+  const [restaurants, dishes] = await Promise.all([
     env.DB.prepare(
       'SELECT r.restaurant_id AS target_id, AVG(r.stars) AS average, COUNT(*) AS count FROM ratings r '
       + 'JOIN restaurants s ON s.id = r.restaurant_id JOIN areas a ON a.id = s.area_id '
@@ -82,17 +90,37 @@ export async function handleRatingsOverview(request: Request, env: Env): Promise
       + 'JOIN dishes d ON d.id = r.dish_id JOIN restaurants s ON s.id = d.restaurant_id JOIN areas a ON a.id = s.area_id '
       + 'WHERE r.dish_id IS NOT NULL AND d.enabled = 1 AND s.enabled = 1 AND a.enabled = 1 GROUP BY r.dish_id',
     ).all<{ target_id: string; average: number; count: number }>(),
-    identity
-      ? env.DB.prepare('SELECT target_type, COALESCE(restaurant_id, dish_id) AS target_id, stars FROM ratings WHERE identity_hash = ?')
-        .bind(identity.hash).all<{ target_type: RatingTargetType; target_id: string; stars: number }>()
-      : Promise.resolve({ results: [] as { target_type: RatingTargetType; target_id: string; stars: number }[] }),
   ])
-  const overview: RatingOverview = {
+  return {
     restaurants: restaurants.results.map(row => ({ targetId: row.target_id, average: averageOf(row.average), count: row.count })),
     dishes: dishes.results.map(row => ({ targetId: row.target_id, average: averageOf(row.average), count: row.count })),
-    mine: mine.results.map(row => ({ targetType: row.target_type, targetId: row.target_id, stars: row.stars })),
   }
-  return json(overview)
+}
+
+async function readMyRatings(request: Request, env: Env): Promise<RatingOverview['mine']> {
+  const identity = await readIdentity(request)
+  if (!identity) return []
+  const mine = await env.DB.prepare('SELECT target_type, COALESCE(restaurant_id, dish_id) AS target_id, stars FROM ratings WHERE identity_hash = ?')
+    .bind(identity.hash).all<{ target_type: RatingTargetType; target_id: string; stars: number }>()
+  return mine.results.map(row => ({ targetType: row.target_type, targetId: row.target_id, stars: row.stars }))
+}
+
+/** This cacheable response never reads identity or includes personal ratings or cookies. */
+export async function handleRatingsSummary(request: Request, env: Env): Promise<Response> {
+  requireRatingRead(request)
+  return ratingReadResponse(request, await readRatingSummaries(env), 'public, max-age=30')
+}
+
+export async function handleMyRatings(request: Request, env: Env): Promise<Response> {
+  requireRatingRead(request)
+  return ratingReadResponse(request, { mine: await readMyRatings(request, env) }, 'private, no-store')
+}
+
+/** Backwards-compatible endpoint, including personal data and always uncached. */
+export async function handleRatingsOverview(request: Request, env: Env): Promise<Response> {
+  requireRatingRead(request)
+  const [summaries, mine] = await Promise.all([readRatingSummaries(env), readMyRatings(request, env)])
+  return ratingReadResponse(request, { ...summaries, mine }, 'no-store')
 }
 
 async function consumeRateLimit(env: Env, scope: string, limit: number, windowSeconds: number): Promise<number> {
@@ -201,6 +229,37 @@ export async function handleRatingMutation(
  * GET /api/admin/ratings：管理员评分列表。
  * 返回对象名称、类型、星级与时间；绝不返回身份摘要或 Cookie 凭据。
  */
+interface RatingCursor { version: 1; updatedAt: string; id: string; filters: string }
+
+function encodeCursor(cursor: RatingCursor): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(cursor))
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+function decodeCursor(raw: string, filters: string): RatingCursor {
+  try {
+    if (raw.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(raw)) throw new Error('INVALID_CURSOR')
+    const encoded = raw.replace(/-/g, '+').replace(/_/g, '/')
+    const bytes = Uint8Array.from(atob(encoded + '='.repeat((4 - encoded.length % 4) % 4)), character => character.charCodeAt(0))
+    const value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes)) as Partial<RatingCursor> | null
+    if (!value || value.version !== 1 || value.filters !== filters || typeof value.updatedAt !== 'string'
+      || !Number.isFinite(Date.parse(value.updatedAt)) || new Date(value.updatedAt).toISOString() !== value.updatedAt
+      || typeof value.id !== 'string' || validateId(value.id) !== value.id) throw new Error('INVALID_CURSOR')
+    return value as RatingCursor
+  } catch {
+    throw new HttpError(400, 'INVALID_INPUT', '评分分页游标无效或筛选条件已改变，请从第一页重新加载')
+  }
+}
+
+function pageLimit(raw: string | null): number {
+  if (raw === null) return DEFAULT_ADMIN_LIST_LIMIT
+  const value = Number(raw)
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1) {
+    throw new HttpError(400, 'INVALID_INPUT', '分页数量必须为正整数')
+  }
+  return Math.min(value, MAX_ADMIN_LIST_LIMIT)
+}
+
 export async function handleAdminRatings(request: Request, env: Env, rawRatingId: string | null): Promise<Response> {
   const session = await authenticate(request, env)
   if (request.method === 'GET' && !rawRatingId) {
@@ -209,17 +268,43 @@ export async function handleAdminRatings(request: Request, env: Env, rawRatingId
     if (targetType !== null && targetType !== 'restaurant' && targetType !== 'dish') {
       throw new HttpError(400, 'INVALID_INPUT', '评分对象类型无效')
     }
-    const targetId = url.searchParams.get('targetId')
-    const restaurantId = url.searchParams.get('restaurantId')
+    const rawTargetId = url.searchParams.get('targetId')
+    const rawRestaurantId = url.searchParams.get('restaurantId')
+    const targetId = rawTargetId === null ? null : validateId(rawTargetId)
+    const restaurantId = rawRestaurantId === null ? null : validateId(rawRestaurantId)
+    const limit = pageLimit(url.searchParams.get('limit'))
+    const filterKey = JSON.stringify([targetType, targetId, restaurantId, limit])
+    const rawCursor = url.searchParams.get('cursor')
+    const cursor = rawCursor === null ? null : decodeCursor(rawCursor, filterKey)
     const conditions: string[] = []
     const parameters: string[] = []
     if (targetType) { conditions.push('r.target_type = ?'); parameters.push(targetType) }
-    if (targetId) { conditions.push('COALESCE(r.restaurant_id, r.dish_id) = ?'); parameters.push(validateId(targetId)) }
+    if (targetId) {
+      if (targetType) {
+        conditions.push(`r.${TARGET_COLUMNS[targetType]} = ?`)
+        parameters.push(targetId)
+      } else {
+        conditions.push('(r.restaurant_id = ? OR r.dish_id = ?)')
+        parameters.push(targetId, targetId)
+      }
+    }
     if (restaurantId) {
-      conditions.push('(r.restaurant_id = ? OR d.restaurant_id = ?)')
-      parameters.push(validateId(restaurantId), validateId(restaurantId))
+      if (targetType) {
+        conditions.push(targetType === 'restaurant' ? 'r.restaurant_id = ?' : 'd.restaurant_id = ?')
+        parameters.push(restaurantId)
+      } else {
+        conditions.push('(r.restaurant_id = ? OR d.restaurant_id = ?)')
+        parameters.push(restaurantId, restaurantId)
+      }
     }
     const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : ''
+    const pageConditions = [...conditions]
+    const pageParameters = [...parameters]
+    if (cursor) {
+      pageConditions.push('(r.updated_at < ? OR (r.updated_at = ? AND r.id < ?))')
+      pageParameters.push(cursor.updatedAt, cursor.updatedAt, cursor.id)
+    }
+    const pageWhere = pageConditions.length ? ` WHERE ${pageConditions.join(' AND ')}` : ''
     const from = 'FROM ratings r LEFT JOIN restaurants s ON s.id = r.restaurant_id '
       + 'LEFT JOIN dishes d ON d.id = r.dish_id LEFT JOIN restaurants dr ON dr.id = d.restaurant_id'
     const [rows, total] = await Promise.all([
@@ -227,11 +312,11 @@ export async function handleAdminRatings(request: Request, env: Env, rawRatingId
         'SELECT r.id, r.target_type, COALESCE(r.restaurant_id, r.dish_id) AS target_id, r.stars, r.created_at, r.updated_at, '
         + 'COALESCE(s.name, d.name) AS target_name, COALESCE(s.enabled, d.enabled) AS target_enabled, '
         + 'd.restaurant_id AS dish_restaurant_id, COALESCE(s.name, dr.name) AS restaurant_name '
-        + `${from}${where} ORDER BY r.updated_at DESC, r.id LIMIT ${ADMIN_LIST_LIMIT}`,
-      ).bind(...parameters).all<Record<string, string | number | null>>(),
+        + `${from}${pageWhere} ORDER BY r.updated_at DESC, r.id DESC LIMIT ?`,
+      ).bind(...pageParameters, limit + 1).all<Record<string, string | number | null>>(),
       env.DB.prepare(`SELECT COUNT(*) AS total ${from}${where}`).bind(...parameters).first<{ total: number }>(),
     ])
-    const items: AdminRating[] = rows.results.map(row => ({
+    const items: AdminRating[] = rows.results.slice(0, limit).map(row => ({
       id: row.id as string,
       targetType: row.target_type as RatingTargetType,
       targetId: row.target_id as string,
@@ -243,7 +328,11 @@ export async function handleAdminRatings(request: Request, env: Env, rawRatingId
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     }))
-    const body: AdminRatingList = { items, total: total?.total ?? items.length }
+    const last = items.at(-1)
+    const nextCursor = rows.results.length > limit && last
+      ? encodeCursor({ version: 1, updatedAt: last.updatedAt, id: last.id, filters: filterKey })
+      : null
+    const body: AdminRatingList = { items, total: total?.total ?? items.length, nextCursor }
     return json(body)
   }
   if (request.method === 'DELETE' && rawRatingId) {

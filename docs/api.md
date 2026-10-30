@@ -64,9 +64,29 @@ mode为restaurant/dish/combo。filters还支持restaurantId、restaurantCategory
 
 `DELETE /api/ratings/{restaurant|dish}/:id`：删除当前身份对该对象的评分，返回204。没有身份Cookie返回401 `IDENTITY_REQUIRED`；该身份没有这条评分返回404。其他身份的评分无法通过该路由寻址，删除只会影响Cookie对应的身份。
 
-`GET /api/admin/ratings`：管理员评分列表，需要有效会话。可选查询参数`targetType`（restaurant/dish）、`targetId`、`restaurantId`（筛选该店铺下菜品的评分）。返回`{items,total}`，`items`最多500条，按更新时间倒序；每项包含`id`、`targetType`、`targetId`、`targetName`、`targetEnabled`、`restaurantId`、`restaurantName`、`stars`、`createdAt`、`updatedAt`，不包含身份摘要或Cookie凭据。`targetType`非法返回400。
+`GET /api/admin/ratings`：管理员评分列表，需要有效会话。可选查询参数 `targetType`（restaurant/dish）、`targetId`、`restaurantId`、`limit`（默认 50，最大 100）和 `cursor`。返回 `{items,total,nextCursor}`，按 `(updated_at DESC,id DESC)` 翻页，末页 `nextCursor:null`。每项包含 `id`、`targetType`、`targetId`、`targetName`、`targetEnabled`、`restaurantId`、`restaurantName`、`stars`、`createdAt`、`updatedAt`，不包含身份摘要或 Cookie 凭据。游标绑定筛选和页大小，变更条件后从第一页读取；非法游标返回 400。
 
-`DELETE /api/admin/ratings/:id`：管理员删除任意评分，需要会话、同源`Origin`和`X-CSRF-Token`；成功204，评分不存在404。删除后公共统计立即按剩余评分重算。
+`DELETE /api/admin/ratings/:id`：管理员删除任意评分，需要会话、同源`Origin`和`X-CSRF-Token`；成功204，评分不存在404。删除后数据库统计按剩余评分重算，其他访客缓存的公共汇总最多延迟30秒。
+
+### 拆分评分读取
+
+- `GET /api/ratings/summary`：返回 `{restaurants,dishes}`，仅公开统计，`Cache-Control: public, max-age=30`；没有身份数据，也不写 Cookie。
+- `GET /api/ratings/mine`：返回 `{mine}`，当前 Cookie 身份的评分，`Cache-Control: private, no-store`。
+- 两个新接口也支持 HEAD。旧 `/api/ratings` 保持兼容并始终 `no-store`。修改评分后客户端用 `cache: 'no-store'` 重新读取。
+
+### 营业状态
+
+店铺创建/更新接受 `openingHours`（空字符串或每日时段，例如 `11:00-14:00,17:00-21:00`，最多8段）、`closedToday`（有效 `YYYY-MM-DD` 或空）；菜品接受 `soldOutOn`（同格式）。跨午夜可写 `22:00-02:00`，全天写 `00:00-24:00`，结束时刻不包含。日期及时段一律按北京时间 UTC+8 计算。
+
+推荐 `filters.openNow` 是可选布尔值；为 true 时只选已设置时段且正在营业的店铺。无论此开关是否开启，今日休息店铺及今日售罄菜品都不参与推荐。公共菜单仍展示它们并标注状态，次日自动恢复。
+
+### 批量导入
+
+`POST /api/admin/import` 需要管理员会话、同源 Origin 和 CSRF。JSON 请求形如 `{dryRun:true,data:{version:1,areas:[],restaurants:[],dishes:[]}}`；CSV 请求形如 `{dryRun:true,csv:"...",restaurantId:"..."}`，两种形式不可混用。
+
+CSV 表头为 `name,category,price,weight,notes`，价格单位为元，支持双引号、引号内逗号与换行。JSON 保留记录 ID、时间与历史分类；未提供 ID 时生成新 ID。每批 1–200 条且整个请求不超过 65536 字节，超量应分批。
+
+预览返回 `{valid,applied,counts,issues,preview}`；issues 给出资源、行号和原因。`dryRun:false` 重新校验并原子写入，成功 201；任何无效记录、重复 ID/同级名称或无效父记录均不写入，数据竞争返回 409。导入只追加，禁止静默覆盖。导出为相同 version1 菜单格式，不含评分和凭据。
 
 ## 管理员会话
 
