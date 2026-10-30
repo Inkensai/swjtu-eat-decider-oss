@@ -1,6 +1,7 @@
 import type { RecommendRequest, Resource } from '../shared/types'
 import { DEFAULT_RESTAURANT_CATEGORY, isDishCategory, isRestaurantCategory, isRestaurantCategoryFilter } from '../shared/categories'
 import { HttpError } from './http'
+import { parseOpeningHours, validCampusDate } from '../shared/availability'
 
 type Input = Record<string, unknown>
 
@@ -110,8 +111,8 @@ export async function readOptionalJson(request: Request): Promise<unknown> {
 
 const fields: Record<Resource, readonly string[]> = {
   areas: ['name', 'type', 'sortOrder', 'enabled'],
-  restaurants: ['areaId', 'name', 'category', 'location', 'enabled'],
-  dishes: ['restaurantId', 'name', 'category', 'priceCents', 'weight', 'notes', 'enabled'],
+  restaurants: ['areaId', 'name', 'category', 'location', 'enabled', 'openingHours', 'closedToday'],
+  dishes: ['restaurantId', 'name', 'category', 'priceCents', 'weight', 'notes', 'enabled', 'soldOutOn'],
 }
 
 export function validateMutation(resource: Resource, value: unknown, partial: boolean): Input {
@@ -135,11 +136,26 @@ export function validateMutation(resource: Resource, value: unknown, partial: bo
     if (resource === 'restaurants') {
       set('areaId', validateId)
       set('location', (item) => string(item, '位置', 300), '')
+      set('openingHours', (item) => {
+        const value = string(item, '营业时间', 160).replaceAll('，', ',')
+        if (parseOpeningHours(value) === null) invalid('营业时间请填写 11:00-14:00,17:00-21:00 格式，最多 8 段')
+        return value
+      }, '')
+      set('closedToday', (item) => {
+        const value = string(item, '休息日期', 10)
+        if (!validCampusDate(value)) invalid('休息日期必须为有效的 YYYY-MM-DD 或空字符串')
+        return value
+      }, '')
     } else {
       set('restaurantId', validateId)
       set('priceCents', (item) => number(item, '价格（分）', 100_000_000, true))
       set('weight', (item) => number(item, '推荐权重', 1_000_000), 1)
       set('notes', (item) => string(item, '备注', 500), '')
+      set('soldOutOn', (item) => {
+        const value = string(item, '售罄日期', 10)
+        if (!validCampusDate(value)) invalid('售罄日期必须为有效的 YYYY-MM-DD 或空字符串')
+        return value
+      }, '')
     }
   }
   return result
@@ -173,8 +189,9 @@ export function validateRecommend(value: unknown): RecommendRequest {
   const input = object(value, ['mode', 'filters', 'avoidRecent', 'recentDishIds'])
   const mode = input.mode
   if (mode !== 'restaurant' && mode !== 'dish' && mode !== 'combo') invalid('推荐模式无效')
-  const source = object(input.filters ?? {}, ['areaId', 'restaurantId', 'restaurantCategory', 'category', 'maxPriceCents', 'excludedRestaurantIds', 'excludedDishIds'])
+  const source = object(input.filters ?? {}, ['areaId', 'restaurantId', 'restaurantCategory', 'category', 'maxPriceCents', 'excludedRestaurantIds', 'excludedDishIds', 'openNow'])
   const filters: RecommendRequest['filters'] = {}
+  if (Object.hasOwn(source, 'openNow')) filters.openNow = boolean(source.openNow, '仅当前营业')
   if (Object.hasOwn(source, 'areaId')) filters.areaId = validateId(source.areaId)
   if (Object.hasOwn(source, 'restaurantId')) filters.restaurantId = validateId(source.restaurantId)
   if (Object.hasOwn(source, 'restaurantCategory')) {

@@ -4,7 +4,8 @@ import { canonicalDishCategory, normalizeRestaurantCategory } from '../shared/ca
 import { authenticate, requireCsrf, requireSameOrigin } from './auth'
 import type { Env } from './env'
 import { HttpError, json } from './http'
-import { handleAdminRatings, handleRatingMutation, handleRatingsOverview } from './ratings'
+import { handleAdminRatings, handleRatingMutation, handleRatingsOverview, handleRatingsSummary, handleMyRatings } from './ratings'
+import { handleMenuImport } from './import'
 import { handleAdminSession } from './session'
 import { readJson, readOptionalJson, validateDishCategoryMutation, validateId, validateMutation, validateRecommend, validateRestaurantCategoryMutation } from './validation'
 
@@ -13,15 +14,15 @@ type Row = Record<string, string | number>
 
 const columns: Record<Resource, Record<string, string>> = {
   areas: { name: 'name', type: 'type', sortOrder: 'sort_order', enabled: 'enabled' },
-  restaurants: { areaId: 'area_id', name: 'name', category: 'category', location: 'location', enabled: 'enabled' },
-  dishes: { restaurantId: 'restaurant_id', name: 'name', category: 'category', priceCents: 'price_cents', weight: 'weight', notes: 'notes', enabled: 'enabled' },
+  restaurants: { areaId: 'area_id', name: 'name', category: 'category', location: 'location', enabled: 'enabled', openingHours: 'opening_hours', closedToday: 'closed_today' },
+  dishes: { restaurantId: 'restaurant_id', name: 'name', category: 'category', priceCents: 'price_cents', weight: 'weight', notes: 'notes', enabled: 'enabled', soldOutOn: 'sold_out_on' },
 }
 
 function entity(resource: Resource, row: Row): Entity {
   const common = { id: row.id as string, name: row.name as string, enabled: row.enabled === 1, createdAt: row.created_at as string, updatedAt: row.updated_at as string }
   if (resource === 'areas') return { ...common, type: row.type as Area['type'], sortOrder: row.sort_order as number }
-  if (resource === 'restaurants') return { ...common, areaId: row.area_id as string, category: row.category as string, location: row.location as string }
-  return { ...common, restaurantId: row.restaurant_id as string, category: row.category as string, priceCents: row.price_cents as number, weight: row.weight as number, notes: row.notes as string }
+  if (resource === 'restaurants') return { ...common, areaId: row.area_id as string, category: row.category as string, location: row.location as string, openingHours: (row.opening_hours as string) ?? '', closedToday: (row.closed_today as string) ?? '' }
+  return { ...common, restaurantId: row.restaurant_id as string, category: row.category as string, priceCents: row.price_cents as number, weight: row.weight as number, notes: row.notes as string, soldOutOn: (row.sold_out_on as string) ?? '' }
 }
 
 function decodeSegment(value: string): string {
@@ -103,6 +104,9 @@ async function remove(env: Env, resource: Resource, id: string): Promise<Respons
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)
   if (url.pathname === '/api/admin/session') return handleAdminSession(request, env)
+  if (url.pathname === '/api/admin/import') return handleMenuImport(request, env)
+  if (url.pathname === '/api/ratings/summary') return handleRatingsSummary(request, env)
+  if (url.pathname === '/api/ratings/mine') return handleMyRatings(request, env)
   if (url.pathname === '/api/ratings') return handleRatingsOverview(request, env)
   const ratingMatch = /^\/api\/ratings\/(restaurant|dish)\/([^/]+)$/.exec(url.pathname)
   if (ratingMatch) {

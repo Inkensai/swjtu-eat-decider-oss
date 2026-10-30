@@ -9,6 +9,7 @@ import { SESSION_COOKIE } from '../server/auth'
 import type { Area, Dish, Restaurant } from '../shared/types'
 import { DEFAULT_RESTAURANT_CATEGORY, DISH_CATEGORIES, RESTAURANT_CATEGORIES } from '../shared/categories'
 import { TEST_ADMIN_PASSWORD, findCookie, passwordHash } from './support'
+import { campusDate } from '../shared/availability'
 
 const origin = 'http://localhost'
 let runtime: Miniflare
@@ -381,6 +382,22 @@ describe('菜单 API 与真实本地 D1', () => {
     expect((await call('/api/admin/dishes/%ZZ', 'PATCH', { name: 'x' })).status).toBe(400)
     const malformed = await worker.fetch(new Request('http://localhost/api/recommend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{' }), env)
     expect(malformed.status).toBe(400)
+  })
+
+  it('persists availability fields and excludes temporary unavailable items from recommendations', async () => {
+    const { restaurant, dish } = await menu()
+    const update = await call(`/api/admin/restaurants/${restaurant.id}`, 'PATCH', { openingHours: '00:00-24:00' })
+    expect(update.status).toBe(200)
+    expect((await update.json() as Restaurant).openingHours).toBe('00:00-24:00')
+    const request = { mode: 'combo', filters: { openNow: true }, avoidRecent: false, recentDishIds: [] }
+    expect((await (await call('/api/recommend', 'POST', request, {}, false)).json() as { status: string }).status).toBe('ok')
+    expect((await call(`/api/admin/dishes/${dish.id}`, 'PATCH', { soldOutOn: campusDate() })).status).toBe(200)
+    expect((await (await call('/api/recommend', 'POST', request, {}, false)).json() as { status: string }).status).toBe('empty')
+    expect((await call(`/api/admin/dishes/${dish.id}`, 'PATCH', { soldOutOn: '' })).status).toBe(200)
+    expect((await call(`/api/admin/restaurants/${restaurant.id}`, 'PATCH', { closedToday: campusDate() })).status).toBe(200)
+    expect((await (await call('/api/recommend', 'POST', { ...request, mode: 'restaurant', filters: {} }, {}, false)).json() as { status: string }).status).toBe('empty')
+    expect((await call(`/api/admin/restaurants/${restaurant.id}`, 'PATCH', { openingHours: '24:01-25:00' })).status).toBe(400)
+    expect((await call(`/api/admin/dishes/${dish.id}`, 'PATCH', { soldOutOn: '2026-02-30' })).status).toBe(400)
   })
 
   it('按 UTF-8 字节限制 JSON 大小，并在读取超限时取消流', async () => {

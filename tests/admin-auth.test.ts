@@ -148,6 +148,31 @@ describe('应用内管理员登录与会话', () => {
     expect(otherSource.cookie).not.toBe('')
   })
 
+  it('并发登录原子预留额度，不丢计数或绕过锁定', async () => {
+    const limited: Env = { ...env, ADMIN_LOGIN_MAX_ATTEMPTS: '3' }
+    const responses = await Promise.all(Array.from({ length: 10 }, () => login('wrong', clientIp, limited)))
+    expect(responses.filter(result => result.response.status === 401)).toHaveLength(2)
+    expect(responses.filter(result => result.response.status === 429)).toHaveLength(8)
+    const row = await env.DB.prepare('SELECT failures, locked_until FROM admin_login_attempts').first<{ failures: number; locked_until: number }>()
+    expect(row?.failures).toBe(3)
+    expect(row?.locked_until).toBeGreaterThan(Date.now())
+    expect((await login(TEST_ADMIN_KEY, clientIp, limited)).response.status).toBe(429)
+    expect((await login(TEST_ADMIN_KEY, '198.51.100.21', limited)).response.status).toBe(200)
+  })
+
+  it('最后一次允许的尝试仍可成功，锁定过期后重新计数', async () => {
+    const limited: Env = { ...env, ADMIN_LOGIN_MAX_ATTEMPTS: '3' }
+    await login('wrong', clientIp, limited)
+    await login('wrong', clientIp, limited)
+    expect((await login(TEST_ADMIN_KEY, clientIp, limited)).response.status).toBe(200)
+    expect(await env.DB.prepare('SELECT COUNT(*) AS total FROM admin_login_attempts').first()).toEqual({ total: 0 })
+    for (let attempt = 0; attempt < 3; attempt++) await login('wrong', clientIp, limited)
+    await env.DB.prepare('UPDATE admin_login_attempts SET window_start = ?, locked_until = ?')
+      .bind(Date.now() - 120_000, Date.now() - 1).run()
+    expect((await login('wrong', clientIp, limited)).response.status).toBe(401)
+    expect(await env.DB.prepare('SELECT failures, locked_until FROM admin_login_attempts').first()).toEqual({ failures: 1, locked_until: 0 })
+  })
+
   it('管理写入必须携带与会话一致的 CSRF 令牌且同源', async () => {
     const { cookie, csrf } = await login()
     expect((await call('/api/admin/areas', { cookie })).status).toBe(200)

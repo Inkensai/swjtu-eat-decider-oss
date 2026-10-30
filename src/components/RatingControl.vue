@@ -14,6 +14,7 @@ const props = defineProps<{
 const ratings = useRatingsStore()
 const busy = ref(false)
 const error = ref('')
+const disabled = computed(() => busy.value || ratings.isPending(props.targetType, props.targetId))
 const summary = computed(() => ratings.summary(props.targetType, props.targetId))
 const myStars = computed(() => ratings.myStars(props.targetType, props.targetId))
 const averageText = computed(() => summary.value.average === null || summary.value.count === 0
@@ -21,7 +22,7 @@ const averageText = computed(() => summary.value.average === null || summary.val
   : `${summary.value.average.toFixed(1)} 分`)
 
 async function rate(stars: number): Promise<void> {
-  if (busy.value) return
+  if (disabled.value) return
   busy.value = true
   error.value = ''
   try { await ratings.submit(props.targetType, props.targetId, stars) }
@@ -30,7 +31,7 @@ async function rate(stars: number): Promise<void> {
 }
 
 async function clear(): Promise<void> {
-  if (busy.value) return
+  if (disabled.value) return
   busy.value = true
   error.value = ''
   try { await ratings.remove(props.targetType, props.targetId) }
@@ -40,7 +41,7 @@ async function clear(): Promise<void> {
 </script>
 
 <template>
-  <div class="rating-control" :class="{ compact, rated: myStars !== null }" :aria-busy="busy">
+  <div class="rating-control" :class="{ compact, rated: myStars !== null }" :aria-busy="disabled">
     <div class="rating-stars" role="group" :aria-label="`为${name}评分，1 至 5 星`">
       <button
         v-for="star in 5"
@@ -50,7 +51,7 @@ async function clear(): Promise<void> {
         :class="{ filled: myStars !== null && star <= myStars }"
         :aria-pressed="myStars === star"
         :aria-label="`${name}：${star} 星`"
-        :disabled="busy"
+        :disabled="disabled"
         @click="rate(star)"
       >★</button>
     </div>
@@ -59,7 +60,7 @@ async function clear(): Promise<void> {
       <span v-if="summary.count">{{ summary.count }} 人评分</span>
       <span v-if="myStars !== null" class="rating-mine">我的评分：{{ myStars }} 星</span>
     </p>
-    <button v-if="myStars !== null" type="button" class="text-button rating-clear" :disabled="busy" @click="clear">删除我的评分</button>
+    <button v-if="myStars !== null" type="button" class="text-button rating-clear" :disabled="disabled" @click="clear">删除我的评分</button>
     <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
   </div>
 </template>

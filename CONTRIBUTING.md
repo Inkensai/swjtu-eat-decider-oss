@@ -16,13 +16,12 @@ npm run dev
 ## 提交前检查
 
 ```powershell
-npm run typecheck
-npm test
-npm run test:pages
 npm run build:pages
 ```
 
-涉及界面或交互的改动，请至少检查桌面和窄屏布局；涉及管理员认证、CSRF、会话或 D1 的改动，请补充对应测试。
+该命令包含类型检查、源码与组件测试、构建和 Pages 产物测试。`test:pages` 依赖已经打包的 `dist/pages`，首次检出不可先于构建执行。GitHub Actions 在 PR 和 main 推送中执行完整验证。
+
+涉及界面或交互的改动，请至少检查桌面和窄屏布局；涉及管理员认证、CSRF、会话或 D1 的改动，请补充对应测试。请求交互应覆盖响应乱序、重复提交、筛选切换及失败提示；迁移必须追加新文件，不能修改已部署的迁移。
 
 ## Pull Request
 

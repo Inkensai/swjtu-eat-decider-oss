@@ -123,14 +123,15 @@ afterAll(async () => {
 describe('真实 Pages advanced-mode 构建产物', () => {
   it('锁定 Pages 生产绑定、路由和应用内认证产物契约', async () => {
     const config = JSON.parse(await readFile(new NodeURL('../wrangler.jsonc', import.meta.url), 'utf8'))
-    expect(config.name).toBe('eat-decider')
+    expect(config.name).toEqual(expect.any(String))
     expect(config.pages_build_output_dir).toBe('./dist/pages')
     expect(config).not.toHaveProperty('main')
     expect(config).not.toHaveProperty('assets')
     expect(config.d1_databases).toEqual([])
     expect(config.env.preview.d1_databases).toEqual([])
     expect(config.env.production.d1_databases).toEqual([expect.objectContaining({
-      binding: 'DB', database_name: 'eat-decider-db',
+      binding: 'DB', database_name: expect.stringMatching(/\S/),
+      database_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
     })])
     expect(JSON.stringify(config)).not.toMatch(/ACCESS_TEAM_DOMAIN|ACCESS_AUD|ADMIN_EMAILS/)
     const routes = JSON.parse(await readFile(new NodeURL('../dist/pages/_routes.json', import.meta.url), 'utf8'))

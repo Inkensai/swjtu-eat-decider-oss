@@ -119,6 +119,35 @@ beforeEach(async () => {
 afterAll(async () => { await runtime?.dispose() })
 
 describe('匿名评分：统计与身份', () => {
+  it('公共汇总可短暂缓存，个人评分独立且禁止缓存，兼容原接口', async () => {
+    const a = findCookie(await rate('dish', dish.id, 5), RATER_COOKIE)
+    const b = findCookie(await rate('dish', dish.id, 3), RATER_COOKIE)
+    const publicResponse = await call('/api/ratings/summary', { cookie: a })
+    expect(publicResponse.status).toBe(200)
+    expect(publicResponse.headers.get('Cache-Control')).toBe('public, max-age=30')
+    expect(setCookies(publicResponse)).toEqual([])
+    const publicData = await publicResponse.json()
+    expect(publicData).toEqual({ restaurants: [], dishes: [{ targetId: dish.id, average: 4, count: 2 }] })
+    expect(await (await call('/api/ratings/summary', { cookie: b })).json()).toEqual(publicData)
+    const personalResponse = await call('/api/ratings/mine', { cookie: a })
+    expect(personalResponse.headers.get('Cache-Control')).toBe('private, no-store')
+    expect(setCookies(personalResponse)).toEqual([])
+    const personalData = await personalResponse.json() as Pick<RatingOverview, 'mine'>
+    expect(personalData).toEqual({ mine: [{ targetType: 'dish', targetId: dish.id, stars: 5 }] })
+    expect(await (await call('/api/ratings/mine', { cookie: b })).json()).toEqual({ mine: [{ targetType: 'dish', targetId: dish.id, stars: 3 }] })
+    expect(await (await call('/api/ratings/mine')).json()).toEqual({ mine: [] })
+    expect(await overview(a)).toEqual({ ...publicData as object, ...personalData })
+  })
+
+  it.each(['/api/ratings/summary', '/api/ratings/mine', '/api/ratings'])('%s 支持无正文 HEAD 并拒绝写入', async path => {
+    const response = await call(path, { method: 'HEAD' })
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('')
+    const write = await call(path, { method: 'POST' })
+    expect(write.status).toBe(405)
+    expect(write.headers.get('Allow')).toBe('GET, HEAD')
+  })
+
   it('无评分时公开统计为空，且不会为浏览者创建身份', async () => {
     const response = await call('/api/ratings')
     expect(response.status).toBe(200)
@@ -182,6 +211,62 @@ describe('匿名评分：统计与身份', () => {
 })
 
 describe('匿名评分：权限与删除', () => {
+  it('同一对象超过 500 条评分可完整分页，时间相同时仍不重复或遗漏', async () => {
+    const now = '2026-10-26T01:00:00.000Z'
+    const ids = Array.from({ length: 505 }, (_, index) => `pagination-${String(index).padStart(4, '0')}`)
+    await env.DB.batch(ids.map((id, index) => env.DB.prepare(
+      'INSERT INTO ratings (id, target_type, dish_id, identity_hash, stars, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, 'dish', dish.id, index.toString(16).padStart(64, '0'), index % 5 + 1, now, now)))
+    // A different target must not enter the filtered count or any page.
+    await rate('restaurant', restaurant.id, 5)
+    let cursor: string | null = null
+    const seen: string[] = []
+    let pages = 0
+    do {
+      const query = new URLSearchParams({ targetType: 'dish', targetId: dish.id, restaurantId: restaurant.id, limit: '10000' })
+      if (cursor) query.set('cursor', cursor)
+      const response = await adminCall(`/api/admin/ratings?${query.toString()}`)
+      expect(response.status).toBe(200)
+      const page = await response.json() as AdminRatingList
+      expect(page.total).toBe(505)
+      expect(page.items.length).toBeLessThanOrEqual(100)
+      seen.push(...page.items.map(item => item.id))
+      cursor = page.nextCursor
+      pages += 1
+      expect(pages).toBeLessThanOrEqual(6)
+    } while (cursor)
+    expect(pages).toBe(6)
+    expect(seen).toEqual([...ids].reverse())
+    expect(new Set(seen).size).toBe(505)
+  })
+
+  it('分页游标绑定筛选条件，删除上一页末条记录不影响继续翻页', async () => {
+    const now = '2026-10-26T01:00:00.000Z'
+    await env.DB.batch(['a', 'b', 'c'].map(id => env.DB.prepare(
+      'INSERT INTO ratings (id, target_type, dish_id, identity_hash, stars, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).bind(id, 'dish', dish.id, id.repeat(64), 4, now, now)))
+    const first = await (await adminCall('/api/admin/ratings?targetType=dish&limit=2')).json() as AdminRatingList
+    expect(first.items.map(item => item.id)).toEqual(['c', 'b'])
+    expect(first.nextCursor).toEqual(expect.any(String))
+    const encoded = encodeURIComponent(first.nextCursor!)
+    expect((await adminCall(`/api/admin/ratings?targetType=restaurant&limit=2&cursor=${encoded}`)).status).toBe(400)
+    expect((await adminCall(`/api/admin/ratings?targetType=dish&limit=3&cursor=${encoded}`)).status).toBe(400)
+    expect((await adminCall(`/api/admin/ratings?targetType=dish&targetId=${dish.id}&limit=2&cursor=${encoded}`)).status).toBe(400)
+    await adminCall('/api/admin/ratings/b', { method: 'DELETE' })
+    const second = await (await adminCall(`/api/admin/ratings?targetType=dish&limit=2&cursor=${encoded}`)).json() as AdminRatingList
+    expect(second.items.map(item => item.id)).toEqual(['a'])
+    expect(second.total).toBe(2)
+    expect(second.nextCursor).toBeNull()
+  })
+
+  it('分页数量有上限，拒绝无效分页参数', async () => {
+    for (const query of ['limit=0', 'limit=-1', 'limit=1.5', 'limit=abc', 'cursor=!', 'cursor=e30', 'targetId=']) {
+      expect((await adminCall(`/api/admin/ratings?${query}`)).status).toBe(400)
+    }
+    const empty = await (await adminCall('/api/admin/ratings?limit=10000')).json() as AdminRatingList
+    expect(empty).toEqual({ items: [], total: 0, nextCursor: null })
+  })
+
   it('本人可以删除自己的评分，删除后人数与平均分重算', async () => {
     const a = findCookie(await rate('dish', dish.id, 5), RATER_COOKIE)
     const b = findCookie(await rate('dish', dish.id, 3), RATER_COOKIE)
@@ -401,7 +486,11 @@ describe('V1.2 数据库迁移', () => {
       expect(await db.prepare('SELECT name, category, price_cents FROM dishes').first()).toEqual({ name: '旧菜品', category: '米饭 / 盖饭', price_cents: 900 })
       await db.prepare('INSERT INTO ratings (id, target_type, dish_id, identity_hash, stars, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .bind('legacy-rating', 'dish', 'legacy-dish', 'a'.repeat(64), 4, now, now).run()
+      await migrate(db, ['0004_rating_indexes.sql'])
       expect(await db.prepare('SELECT COUNT(*) AS count FROM ratings').first()).toEqual({ count: 1 })
+      const plan = await db.prepare('EXPLAIN QUERY PLAN SELECT target_type, COALESCE(restaurant_id, dish_id), stars FROM ratings WHERE identity_hash = ?')
+        .bind('a'.repeat(64)).all<{ detail: string }>()
+      expect(plan.results.some(row => row.detail.includes('ratings_identity'))).toBe(true)
     } finally {
       await legacy.dispose()
     }

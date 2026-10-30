@@ -19,10 +19,10 @@ Vue 3 单页应用通过同源 JSON API 调用 Cloudflare Pages Function，使�
 ## 数据模型
 
 - `areas`：名称、type、sort_order、enabled。
-- `restaurants`：引用 `area_id`，名称、category、location、enabled。
-- `dishes`：引用 `restaurant_id`，名称、category、price_cents、weight、notes、enabled。
+- `restaurants`：引用 `area_id`，名称、category、location、enabled，以及 `opening_hours`、`closed_today`。
+- `dishes`：引用 `restaurant_id`，名称、category、price_cents、weight、notes、enabled，以及 `sold_out_on`。
 - `admin_sessions`：会话令牌的 SHA-256 摘要、CSRF 令牌、创建和过期时间。
-- `admin_login_attempts`：按来源 IP 摘要统计的失败窗口和锁定时间。
+- `admin_login_attempts`：按来源 IP 摘要预留的尝试次数、窗口和锁定时间；单条原子 UPSERT 在凭据校验前执行，成功后清除计数。
 - `ratings`：评分对象类型、`restaurant_id` / `dish_id`、匿名身份摘要、星级和时间。
 - `rating_rate_limits`：按匿名身份摘要与来源 IP 摘要统计的固定窗口写入次数。
 
@@ -40,6 +40,15 @@ Vue 3 单页应用通过同源 JSON API 调用 Cloudflare Pages Function，使�
 - 两个部分唯一索引 `(identity_hash, restaurant_id)` 与 `(identity_hash, dish_id)` 保证同一身份对同一对象只有一条有效评分，并作为并发重复提交的最终约束。
 - 写入使用 `INSERT ... ON CONFLICT ... DO UPDATE`：重复提交只更新星级与 `updated_at`，`created_at` 保留，评分人数不变。
 - 统计直接使用 `AVG(stars)` 与 `COUNT(*)`，只覆盖当前公开可见（自身与父级均启用）的对象。
+- `0004` 添加非部分的 `identity_hash` 索引，支持个人评分查询；分页采用 `(updated_at,id)` 游标，并有对应排序/筛选索引。公共统计独立接口可缓存30秒，私人评分单独读取且不缓存。
+
+前端所有评分写入经统一队列执行，并在支持 Web Locks 时跨标签页串行，确保首次响应 Cookie 落地后才发出下一次写入。读请求带版本号，过期响应不能覆盖后续操作。写入完成后绕过公共缓存重新读取。
+
+### 营业与批量维护
+
+`shared/availability.ts` 在前后端复用北京时间规则；默认推荐剔除今日休息/售罄，`openNow` 额外要求有效营业时段。未设置时段属于未知状态，不能当作已知营业。临时标记以日期保存，次日无需写数据库即可失效。
+
+`server/import.ts` 复用单条 CRUD 校验，在 dry-run 给出逐行预览。确认后再次校验并用 D1 `batch` 原子执行；每条 INSERT 内再次检测重复 ID/同级名称，约束冲突会回滚整个批次。限制200条和65536字节，既不覆盖旧数据，也不绕过鉴权与CSRF。JSON 允许原有历史分类往返，CSV 新增菜品遵循标准分类。
 
 `rating_rate_limits` 保存固定窗口计数，按匿名身份摘要和来源 IP 摘要分别限流。来源 IP 只读取 Cloudflare 边缘写入的 `CF-Connecting-IP`；`X-Real-IP` 等头可由普通客户端伪造，不作为限流维度。
 

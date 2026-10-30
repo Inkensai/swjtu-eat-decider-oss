@@ -1,5 +1,6 @@
 import type { Dish, Menu, RecommendRequest, RecommendResult } from './types'
 import { canonicalDishCategory, normalizeRestaurantCategory } from './categories'
+import { campusDate, isDishAvailable, isRestaurantOpen } from './availability'
 
 function randomValue(rng: () => number): number {
   const value = rng()
@@ -31,6 +32,7 @@ export function recommend(
   menu: Menu,
   request: RecommendRequest,
   rng: () => number = Math.random,
+  now: Date = new Date(),
 ): RecommendResult {
   for (const dish of menu.dishes) {
     if (!Number.isFinite(dish.weight) || dish.weight < 0) {
@@ -54,6 +56,8 @@ export function recommend(
     : normalizeRestaurantCategory(filters.restaurantCategory)
   const dishCategory = filters.category ? canonicalDishCategory(filters.category) : undefined
   const restaurants = menu.restaurants.filter(restaurant => restaurant.enabled
+    && restaurant.closedToday !== campusDate(now)
+    && (!filters.openNow || isRestaurantOpen(restaurant, now))
     && areaIds.has(restaurant.areaId)
     && (!filters.restaurantId || restaurant.id === filters.restaurantId)
     && (!restaurantCategory || normalizeRestaurantCategory(restaurant.category) === restaurantCategory)
@@ -62,7 +66,7 @@ export function recommend(
 
   for (const dish of menu.dishes) {
     const candidates = dishesByRestaurant.get(dish.restaurantId)
-    if (candidates && dish.enabled
+    if (candidates && isDishAvailable(dish, now)
       && (!dishCategory || canonicalDishCategory(dish.category) === dishCategory)
       && (filters.maxPriceCents === undefined || dish.priceCents <= filters.maxPriceCents)
       && !excludedDishes.has(dish.id)) {
