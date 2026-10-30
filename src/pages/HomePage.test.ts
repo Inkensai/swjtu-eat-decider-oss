@@ -50,4 +50,47 @@ describe('home preference restoration', () => {
     const recommend = request.mock.calls.find(([path]) => path === '/recommend')
     expect(JSON.parse(String(recommend?.[1]?.body)).filters.openNow).toBe(true)
   })
+
+  it('preserves the focused reroll button across requests and blocks repeated activation while busy', async () => {
+    let recommendationCount = 0
+    let finishRecommendation!: (value: unknown) => void
+    const result = { status: 'ok', restaurant, dish, candidateDishCount: 1 }
+    request.mockImplementation(path => {
+      if (path !== '/recommend') return Promise.resolve(menu[path])
+      recommendationCount++
+      return recommendationCount === 1
+        ? Promise.resolve(result)
+        : new Promise(resolve => { finishRecommendation = resolve })
+    })
+    const wrapper = mount(HomePage, { attachTo: document.body, global: { plugins: [createPinia()] } })
+    wrappers.push(wrapper)
+    await flushPromises()
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const reroll = wrapper.find<HTMLButtonElement>('.result-actions .secondary')
+    const focusedButton = reroll.element
+    focusedButton.focus()
+    expect(document.activeElement).toBe(focusedButton)
+    await reroll.trigger('click')
+    expect(recommendationCount).toBe(2)
+    expect(reroll.attributes('aria-disabled')).toBe('true')
+    expect(focusedButton.disabled).toBe(false)
+    expect(document.activeElement).toBe(focusedButton)
+    await reroll.trigger('click')
+    expect(recommendationCount).toBe(2)
+
+    finishRecommendation({ ...result, dish: { ...dish, id: 'd2', name: '番茄面' } })
+    await flushPromises()
+    expect(wrapper.find('.result-content h2').text()).toBe('番茄面')
+    expect(wrapper.find('.result-actions .secondary').element).toBe(focusedButton)
+    expect(document.activeElement).toBe(focusedButton)
+    expect(reroll.attributes('aria-disabled')).toBe('false')
+
+    await reroll.trigger('click')
+    expect(recommendationCount).toBe(3)
+    finishRecommendation(result)
+    await flushPromises()
+    expect(document.activeElement).toBe(focusedButton)
+  })
 })

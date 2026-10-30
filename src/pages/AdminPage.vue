@@ -208,7 +208,7 @@ async function remove() {
 </script>
 
 <template>
-  <section class="intro page-intro"><span class="eyebrow">一份菜单，更多好选择</span><h1>校园<span>菜单管理</span></h1><p>按区域整理店铺，为每家店添上值得吃的菜。</p></section>
+  <section class="intro page-intro"><span class="eyebrow">MENU EDITOR / 一份菜单，更多好选择</span><h1>校园<span>菜单管理</span></h1><p>按区域整理店铺，为每家店添上值得吃的菜。</p></section>
   <form v-if="session.ready && !session.authenticated" class="panel admin-login" @submit.prevent="login">
     <div class="section-top"><h2>管理员登录</h2></div>
     <p class="inline-hint">只有管理员可以修改共享菜单。请使用管理员密码或访问密钥，凭据只提交到服务端校验，不保存在浏览器或前端代码中；普通访客无需登录即可浏览和使用推荐。</p>

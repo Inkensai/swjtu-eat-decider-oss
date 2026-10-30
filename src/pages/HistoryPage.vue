@@ -47,7 +47,7 @@ const targets = computed(() => {
 </script>
 
 <template>
-  <section class="intro page-intro"><span class="eyebrow">每一顿的小记忆</span><h1>我的<span>用餐记录</span></h1><p>记住那些让你少一点纠结的选择。仅此浏览器可见，最多保留 100 条。</p></section>
+  <section class="intro page-intro"><span class="eyebrow">DINING JOURNAL / 每一顿的小记忆</span><h1>我的<span>用餐记录</span></h1><p>记住那些让你少一点纠结的选择。仅此浏览器可见，最多保留 100 条。</p></section>
   <div v-if="history.warning" class="notice" role="status">{{ history.warning }}</div>
   <div v-if="ratings.error" class="notice error" role="alert">{{ ratings.error }}</div>
   <section class="panel history-panel">

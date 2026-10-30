@@ -92,7 +92,7 @@ function resetFilters(): void {
 </script>
 
 <template>
-  <section class="intro page-intro"><span class="eyebrow">今天的菜单，都在这儿</span><h1>浏览<span>菜单</span></h1><p>按店铺或菜品逛一逛，顺手给喜欢的打个分。评分匿名提交，全站共享。</p></section>
+  <section class="intro page-intro"><span class="eyebrow">MENU COLLECTION / 今天的菜单，都在这儿</span><h1>浏览<span>菜单</span></h1><p>按店铺或菜品逛一逛，顺手给喜欢的打个分。评分匿名提交，全站共享。</p></section>
 
   <div v-if="menu.error" class="notice error" role="alert">{{ menu.error }} <button class="text-button" @click="menu.load">重新加载</button></div>
   <div v-if="ratings.error" class="notice error" role="alert">{{ ratings.error }} <button class="text-button" @click="ratings.load">重新加载评分</button></div>
@@ -135,7 +135,8 @@ function resetFilters(): void {
     <div v-else-if="view === 'restaurants'">
       <div v-if="!filteredRestaurants.length" class="empty-state"><span aria-hidden="true">⌂</span><h3>还没有符合条件的店铺</h3><p>{{ restaurants.length ? '试试放宽区域、类型或搜索条件。' : '菜单还是空的，请管理员先添加店铺。' }}</p><button v-if="hasFilter" type="button" class="secondary" @click="resetFilters">重置筛选</button></div>
       <div v-else class="menu-grid">
-        <article v-for="restaurant in filteredRestaurants" :key="restaurant.id" class="menu-card shop-card">
+        <article v-for="(restaurant, index) in filteredRestaurants" :key="restaurant.id" class="menu-card shop-card" :style="{ '--stagger': Math.min(index, 8) }">
+          <div class="card-sequence" aria-hidden="true"><span>PLACE / {{ String(index + 1).padStart(3, '0') }}</span><span>↗</span></div>
           <div class="card-head"><h3>{{ restaurant.name }}</h3><span class="card-tag">{{ normalizeRestaurantCategory(restaurant.category) }}</span></div>
           <p class="card-meta">{{ areaName(restaurant.areaId) }}<span v-if="restaurant.location"> · {{ restaurant.location }}</span></p>
           <p class="card-meta">{{ availabilityLabel(restaurant, now) }}<span v-if="restaurant.openingHours"> · {{ restaurant.openingHours }}</span></p>
@@ -149,7 +150,8 @@ function resetFilters(): void {
     <div v-else>
       <div v-if="!filteredDishes.length" class="empty-state"><span aria-hidden="true">≋</span><h3>还没有符合条件的菜品</h3><p>{{ selectedShop && !selectedShopDishes.length ? '这家店还没有录入菜品。' : dishes.length ? '试试放宽区域、店铺、分类或搜索条件。' : '菜单还是空的，请管理员先添加菜品。' }}</p><button v-if="hasFilter" type="button" class="secondary" @click="resetFilters">重置筛选</button></div>
       <div v-else class="menu-grid">
-        <article v-for="dish in filteredDishes" :key="dish.id" class="menu-card dish-card">
+        <article v-for="(dish, index) in filteredDishes" :key="dish.id" class="menu-card dish-card" :style="{ '--stagger': Math.min(index, 8) }">
+          <div class="card-sequence" aria-hidden="true"><span>DISH / {{ String(index + 1).padStart(3, '0') }}</span><span>＋</span></div>
           <div class="card-head"><h3>{{ dish.name }}</h3><strong class="card-price">{{ money(dish.priceCents) }}</strong></div>
           <p class="card-meta">{{ restaurantName(dish.restaurantId) }} · {{ areaName(restaurantMap.get(dish.restaurantId)?.areaId ?? '') }}</p>
           <p class="card-tags"><span class="card-tag">{{ canonicalDishCategory(dish.category) || '不分类' }}</span></p>

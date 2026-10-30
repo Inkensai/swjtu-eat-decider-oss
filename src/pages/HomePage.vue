@@ -9,6 +9,7 @@ import { usePreferencesStore, defaultPreferences } from '../stores/preferences'
 import { availabilityLabel, campusDate, isDishAvailable, isRestaurantOpen } from '../../shared/availability'
 import { useClock } from '../lib/useClock'
 import { centsFromInput, modeLabels, money } from '../lib/format'
+import MealVisual from '../components/MealVisual.vue'
 
 const menu = useMenuStore()
 const history = useHistoryStore()
@@ -29,6 +30,7 @@ const busy = ref(false)
 const error = ref('')
 const result = ref<RecommendResult | null>(null)
 const resultHistoryId = ref('')
+const resultSequence = ref(0)
 const activeAreas = computed(() => menu.areas.filter((area) => area.enabled))
 const activeAreaIds = computed(() => new Set(activeAreas.value.map((area) => area.id)))
 const activeRestaurants = computed(() => menu.restaurants.filter((restaurant) => restaurant.enabled && restaurant.closedToday !== campusDate(now.value) && (!openNow.value || isRestaurantOpen(restaurant, now.value)) && activeAreaIds.value.has(restaurant.areaId)))
@@ -125,6 +127,7 @@ async function decide() {
   try {
     const next = await api<RecommendResult>('/recommend', { method: 'POST', body: JSON.stringify(request) })
     result.value = next
+    resultSequence.value++
     resultHistoryId.value = next.status === 'ok' ? history.add(request.mode, next) : ''
   } catch (e) { error.value = e instanceof Error ? e.message : '推荐暂时失败，请再试一次。' }
   finally { busy.value = false }
@@ -134,9 +137,10 @@ function resetFilters() { category.value = ''; maxPrice.value = ''; excludedRest
 
 <template>
   <section class="intro home-intro">
-    <span class="eyebrow"><span class="tiny-dot"></span> 每一顿，都值得期待</span>
-    <h1>今天<span>吃什么？</span></h1>
-    <p>纠结就交给我们。选个区域，下一顿安排好了。</p>
+    <div><span class="eyebrow">DAILY DINING <span aria-hidden="true">/</span> 每一顿，都值得期待</span>
+    <h1>今天，<span>吃什么？</span></h1>
+    <p>给选择一点留白，把期待留给下一餐。</p></div>
+    <div class="intro-side" aria-label="当前菜单数量"><span>THE MENU, AT A GLANCE</span><div><strong>{{ String(menu.restaurants.length).padStart(2, '0') }}</strong> 家店铺 <i aria-hidden="true">/</i> <strong>{{ String(menu.dishes.length).padStart(2, '0') }}</strong> 道菜品</div><small>一份共享菜单，无数种好好吃饭的可能。</small></div>
   </section>
 
   <div v-if="menu.error" class="notice error" role="alert">{{ menu.error }} <button class="text-button" @click="menu.load">重新加载</button></div>
@@ -144,11 +148,11 @@ function resetFilters() { category.value = ''; maxPrice.value = ''; excludedRest
   <div v-if="preferences.warning" class="notice" role="status">{{ preferences.warning }}</div>
   <section class="decision-layout">
     <form class="panel decision-panel" @submit.prevent="decide">
-      <div class="section-top"><h2>这次，怎么选</h2><span class="subtle">简单三步，马上开饭</span></div>
+      <div class="section-top"><h2><span class="section-index" aria-hidden="true">01 /</span> 设定这一餐</h2><span class="subtle">YOUR PREFERENCE</span></div>
       <fieldset :disabled="busy || menu.loading" class="plain-fieldset">
         <legend class="sr-only">推荐条件</legend>
         <div class="mode-tabs" role="group" aria-label="推荐模式">
-          <button v-for="item in (['combo', 'restaurant', 'dish'] as Mode[])" :key="item" type="button" :class="{ selected: mode === item }" :aria-pressed="mode === item" @click="mode = item"><span class="mode-icon" aria-hidden="true">{{ item === 'combo' ? '✦' : item === 'restaurant' ? '⌂' : '≋' }}</span>{{ modeLabels[item] }}</button>
+          <button v-for="(item, index) in (['combo', 'restaurant', 'dish'] as Mode[])" :key="item" type="button" :class="{ selected: mode === item }" :aria-pressed="mode === item" @click="mode = item"><span class="mode-number" aria-hidden="true">0{{ index + 1 }}</span><span class="mode-copy">{{ modeLabels[item] }}<small>{{ item === 'combo' ? '店铺 + 菜品' : item === 'restaurant' ? '先决定去哪家' : '从熟悉的店里选' }}</small></span></button>
         </div>
         <div class="field-grid main-fields">
           <label v-if="mode !== 'dish'" class="type-filter-field">今天想吃什么类型？<select v-model="restaurantCategory" aria-describedby="restaurant-type-hint"><option value="">不限类型</option><option v-for="item in RESTAURANT_CATEGORIES" :key="item" :value="item" :disabled="restaurantCategoryCounts[item] === 0">{{ item }}（{{ restaurantCategoryCounts[item] }}）</option></select><small id="restaurant-type-hint" class="sr-only">按当前区域与启用店铺统计；无候选类别不可选。</small></label>
@@ -173,24 +177,23 @@ function resetFilters() { category.value = ''; maxPrice.value = ''; excludedRest
       <p class="privacy-note">区域、预算与排除偏好自动保存在此浏览器。<button type="button" class="text-button" @click="clearPreferences">清除偏好</button></p>
     </form>
 
-    <section class="result-panel" aria-live="polite" aria-atomic="true" :aria-busy="busy">
-      <template v-if="result?.status === 'ok'">
-        <div class="result-eyebrow">你的下一顿 <span aria-hidden="true">✦</span></div>
-        <div class="food-art" aria-hidden="true"><span class="plate"><i></i><b></b><em></em></span><span class="chopstick one"></span><span class="chopstick two"></span></div>
-        <span class="result-area">{{ areaName || '发现一点好味道' }}</span>
-        <h2>{{ result.dish?.name || result.restaurant.name }}</h2>
-        <p class="result-restaurant">{{ result.dish ? result.restaurant.name : '先决定去哪家，到了再慢慢选' }}</p>
-        <strong v-if="result.dish" class="result-price">{{ money(result.dish.priceCents) }}</strong>
-        <p v-if="result.dish?.notes" class="result-notes">{{ result.dish.notes }}</p>
-        <p v-if="result.restaurant.location" class="result-location">{{ result.restaurant.location }}</p>
-        <p class="result-location">{{ availabilityLabel(result.restaurant, now) }}</p>
-        <div class="result-actions"><button v-if="selectedEntry" type="button" class="primary" :disabled="busy" @click="history.adopt(resultHistoryId)">{{ selectedEntry.adopted ? '✓ 就吃这个，已采纳' : '就吃这个' }}</button><span v-else class="subtle result-cap">记录已满，本条推荐未加入历史</span><button type="button" class="secondary" :disabled="busy" @click="decide">再来一次</button></div>
-      </template>
-      <template v-else-if="result?.status === 'empty'"><span class="empty-symbol" aria-hidden="true">⌕</span><h2>还没找到合适的</h2><p>{{ result.message }}</p><p class="subtle">试着放宽预算，或减少一些排除项。</p></template>
-      <template v-else><div class="food-art empty-art" aria-hidden="true"><span class="plate"><i></i><b></b><em></em></span><span class="chopstick one"></span><span class="chopstick two"></span></div><span class="result-placeholder-label">把选择交给一点惊喜</span><h2>好吃的，正在等你</h2><p>按下按钮，发现今天的心动一餐。</p><span class="small-spark" aria-hidden="true">✦</span></template>
+    <section class="result-panel" :class="{ 'is-busy': busy, 'has-result': result?.status === 'ok' }" aria-label="推荐结果" :aria-busy="busy">
+      <div class="result-header"><span class="result-index">02 / YOUR NEXT MEAL</span><span class="result-state"><i aria-hidden="true"></i>{{ busy ? '正在挑选' : result?.status === 'ok' ? '推荐已就绪' : '等待你的选择' }}</span></div>
+      <MealVisual :busy="busy" :selected="result?.status === 'ok'" :sequence="resultSequence" />
+      <div class="result-content" aria-live="polite" aria-atomic="true"><div :key="resultSequence" class="result-reveal">
+        <template v-if="result?.status === 'ok'">
+          <span class="result-area">{{ areaName || '今日推荐' }} <span aria-hidden="true">/</span> NO.{{ String(resultSequence).padStart(3, '0') }}</span>
+          <h2>{{ result.dish?.name || result.restaurant.name }}</h2>
+          <p class="result-restaurant">{{ result.dish ? result.restaurant.name : '先决定去哪家，到了再慢慢选' }}</p>
+          <dl class="result-meta"><div v-if="result.dish"><dt>单份价格</dt><dd class="result-price">{{ money(result.dish.priceCents) }}</dd></div><div><dt>营业状态</dt><dd>{{ availabilityLabel(result.restaurant, now) }}</dd></div><div v-if="result.restaurant.location"><dt>店铺位置</dt><dd>{{ result.restaurant.location }}</dd></div></dl>
+          <p v-if="result.dish?.notes" class="result-notes">{{ result.dish.notes }}</p>
+        </template>
+        <template v-else-if="result?.status === 'empty'"><span class="result-area">NO MATCH / 换个条件试试</span><h2>还没找到合适的</h2><p>{{ result.message }}</p><p class="subtle">试着放宽预算，或减少一些排除项。</p></template>
+        <template v-else><span class="result-area">A LITTLE SURPRISE, EVERY DAY</span><h2>下一餐，<br>值得一点期待。</h2><p>选好偏好，按下「帮我决定」。<br>让一顿好饭，成为今天的小惊喜。</p></template>
+      </div><div v-if="result?.status === 'ok'" class="result-actions"><button v-if="selectedEntry" type="button" class="primary" :aria-disabled="busy" @click="!busy && history.adopt(resultHistoryId)">{{ selectedEntry.adopted ? '✓ 就吃这个，已采纳' : '就吃这个' }}</button><span v-else class="subtle result-cap">记录已满，本条推荐未加入历史</span><button type="button" class="secondary" :aria-disabled="busy" @click="decide">再来一次 <span aria-hidden="true">↗</span></button></div></div>
     </section>
   </section>
-  <div class="home-bottom"><span><b>01</b> 选个地方</span><span><b>02</b> 留点惊喜</span><span><b>03</b> 好好吃饭</span></div>
+  <div class="home-bottom"><span><b>01</b> 选择偏好</span><span><b>02</b> 发现美味</span><span><b>03</b> 好好吃饭</span><span class="home-bottom-note">LESS DECIDING. MORE ENJOYING.</span></div>
 </template>
 
 
